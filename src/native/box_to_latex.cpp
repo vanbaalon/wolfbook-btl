@@ -20,6 +20,7 @@
 #include "wl_parser.h"
 #include "special_chars.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
@@ -27,6 +28,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 
 namespace wolfbook {
 namespace {

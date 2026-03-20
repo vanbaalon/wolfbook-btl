@@ -46,7 +46,7 @@
         [
           "OS == 'linux'",
           {
-            "cflags_cc": [ "-std=c++17", "-O3", "-fvisibility=hidden" ]
+            "cflags_cc": [ "-std=c++17", "-O3", "-fvisibility=hidden", "-fexceptions", "-frtti" ]
           }
         ]
       ]
