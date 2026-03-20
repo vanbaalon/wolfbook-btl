@@ -296,15 +296,51 @@ private:
                         stripped = prefix;
                     }
                 } else {
-                    // Non-numeric suffix (e.g. "*^-40"): render as \text{} with
-                    // backtick → grave and caret → wedge substitutions.
-                    result_ += "\\text{";
-                    for (char c : s) {
-                        if      (c == '`') result_ += "$\\grave{ }$";
-                        else if (c == '^') result_ += "${}^{\\wedge}$";
-                        else               result_ += c;
+                    // Non-numeric suffix — check for "prec*^exp" scientific
+                    // notation form first, e.g. afterBt = "10.*^-23".
+                    auto starPos = afterBt.find("*^");
+                    bool handled = false;
+                    if (starPos != std::string_view::npos) {
+                        std::string_view precSv = afterBt.substr(0, starPos);
+                        std::string_view expSv  = afterBt.substr(starPos + 2);
+                        bool validPrec = !precSv.empty();
+                        for (char c : precSv)
+                            if (!std::isdigit(static_cast<unsigned char>(c)) && c != '.')
+                                { validPrec = false; break; }
+                        size_t expStart = (!expSv.empty() &&
+                            (expSv[0] == '-' || expSv[0] == '+')) ? 1u : 0u;
+                        bool validExp = expSv.size() > expStart;
+                        for (size_t i = expStart; i < expSv.size(); ++i)
+                            if (!std::isdigit(static_cast<unsigned char>(expSv[i])))
+                                { validExp = false; break; }
+                        if (validPrec && validExp) {
+                            // Truncate mantissa to stated precision sig figs.
+                            double prec = parseDouble(precSv);
+                            int nSig = (prec > 0.5) ? static_cast<int>(std::round(prec)) : 0;
+                            std::string mantissa = (nSig > 0)
+                                ? truncateToSigFigs(prefix, nSig)
+                                : std::string(prefix);
+                            // Strip trailing '.' before \times: "1." → "1"
+                            while (!mantissa.empty() && mantissa.back() == '.')
+                                mantissa.pop_back();
+                            result_ += mantissa;
+                            result_ += "\\times 10^{";
+                            result_ += expSv;
+                            result_ += '}';
+                            handled = true;
+                        }
                     }
-                    result_ += '}';
+                    if (!handled) {
+                        // Unrecognised suffix (e.g. bare "*^-40"): render as
+                        // \text{} with backtick → grave, caret → wedge.
+                        result_ += "\\text{";
+                        for (char c : s) {
+                            if      (c == '`') result_ += "$\\grave{ }$";
+                            else if (c == '^') result_ += "${}^{\\wedge}$";
+                            else               result_ += c;
+                        }
+                        result_ += '}';
+                    }
                     return;
                 }
             }
