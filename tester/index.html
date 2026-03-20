@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wolfbook — Box→LaTeX Tester</title>
+
+  <!-- KaTeX from CDN (fine for local dev; VSCode Webview uses bundled version) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #1e1e2e;
+      --surface:   #2a2a3e;
+      --border:    #44475a;
+      --accent:    #bd93f9;
+      --green:     #50fa7b;
+      --red:       #ff5555;
+      --yellow:    #f1fa8c;
+      --text:      #f8f8f2;
+      --muted:     #6272a4;
+      --radius:    8px;
+      --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+      --font-ui:   system-ui, -apple-system, sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- Header ---- */
+    header {
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      letter-spacing: .02em;
+    }
+    header .badge {
+      font-size: .7rem;
+      background: var(--accent);
+      color: var(--bg);
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    header .status {
+      margin-left: auto;
+      font-size: .8rem;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .dot.ok  { background: var(--green); }
+    .dot.err { background: var(--red); }
+
+    /* ---- Main layout ---- */
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto 1fr auto 1fr;
+      gap: 0;
+    }
+
+    /* Panels */
+    .panel {
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+    .panel:nth-child(even) { border-right: none; }
+    .panel-label {
+      padding: 8px 16px;
+      font-size: .72rem;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* ---- Input area ---- */
+    #input-panel { grid-column: 1; grid-row: 1 / 3; }
+    textarea {
+      flex: 1;
+      background: var(--surface);
+      color: var(--text);
+      border: none;
+      outline: none;
+      resize: none;
+      font-family: var(--font-mono);
+      font-size: .88rem;
+      line-height: 1.6;
+      padding: 16px;
+      min-height: 260px;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      padding: 10px 16px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-wrap: wrap;
+    }
+    button {
+      cursor: pointer;
+      border: none;
+      border-radius: var(--radius);
+      font-size: .82rem;
+      font-weight: 600;
+      padding: 7px 16px;
+      transition: opacity .15s;
+    }
+    button:hover { opacity: .85; }
+    #btn-translate { background: var(--accent); color: var(--bg); }
+    #btn-clear     { background: var(--border);  color: var(--text); }
+    .example-btn   { background: var(--surface); color: var(--muted);
+                     border: 1px solid var(--border); font-size: .75rem; }
+
+    /* ---- LaTeX output ---- */
+    #latex-panel { grid-column: 2; grid-row: 1; }
+    #latex-out {
+      flex: 1;
+      font-family: var(--font-mono);
+      font-size: .85rem;
+      padding: 14px 16px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      line-height: 1.7;
+      background: var(--bg);
+      min-height: 100px;
+      overflow: auto;
+    }
+    #latex-out.error { color: var(--red); }
+    #latex-out .latex-string { color: var(--yellow); }
+
+    /* ---- KaTeX render ---- */
+    #katex-panel { grid-column: 2; grid-row: 2; }
+    #katex-display {
+      flex: 1;
+      padding: 24px;
+      overflow: auto;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      background: var(--bg);
+    }
+    #katex-display .placeholder { color: var(--muted); font-size: .85rem; }
+    #katex-display .katex-error { color: var(--red); font-family: var(--font-mono); font-size: .82rem; }
+
+    /* ---- Example snippets ---- */
+    #examples-panel {
+      grid-column: 1 / 3;
+      grid-row: 3;
+      border-right: none;
+    }
+    .examples-inner {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 10px 16px;
+      background: var(--surface);
+    }
+
+    /* ---- Error banner ---- */
+    #error-banner {
+      display: none;
+      padding: 10px 16px;
+      background: #3d1515;
+      border-top: 2px solid var(--red);
+      font-size: .82rem;
+      color: var(--red);
+      grid-column: 1 / 3;
+    }
+
+    /* ---- KaTeX light-on-dark override ---- */
+    .katex { color: var(--text) !important; }
+
+    /* ---- Responsive: stack on narrow screens ---- */
+    @media (max-width: 700px) {
+      main { grid-template-columns: 1fr; }
+      .panel { border-right: none; }
+      #input-panel  { grid-column: 1; grid-row: 1; }
+      #latex-panel  { grid-column: 1; grid-row: 2; }
+      #katex-panel  { grid-column: 1; grid-row: 3; }
+      #examples-panel { grid-row: 4; grid-column: 1; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Wolfbook</h1>
+  <span class="badge">Box → LaTeX Tester</span>
+  <span class="status">
+    <span class="dot" id="srv-dot"></span>
+    <span id="srv-label">checking…</span>
+  </span>
+</header>
+
+<main>
+
+  <!-- LEFT: WL box input -->
+  <div class="panel" id="input-panel">
+    <div class="panel-label">
+      WL box expression (InputForm string)
+      <span id="chars-count" style="font-weight:400"></span>
+    </div>
+    <textarea id="box-input" spellcheck="false"
+      placeholder='Paste a box expression, e.g.
+FractionBox["1","2"]
+RowBox[{"x","+"," y"}]
+UnderoverscriptBox["\[Sum]",RowBox[{"n","=","1"}],"\[Infinity]"]'></textarea>
+    <div class="btn-row">
+      <button id="btn-translate">Translate ↵</button>
+      <button id="btn-clear">Clear</button>
+    </div>
+  </div>
+
+  <!-- RIGHT TOP: LaTeX string -->
+  <div class="panel" id="latex-panel">
+    <div class="panel-label">
+      LaTeX output
+      <span id="copy-btn" style="cursor:pointer;color:var(--accent);font-weight:400"
+            title="Copy to clipboard">copy</span>
+    </div>
+    <div id="latex-out"><span style="color:var(--muted)">— waiting for input —</span></div>
+  </div>
+
+  <!-- RIGHT BOTTOM: KaTeX render -->
+  <div class="panel" id="katex-panel">
+    <div class="panel-label">KaTeX render (display mode)</div>
+    <div id="katex-display">
+      <span class="placeholder">— waiting for LaTeX —</span>
+    </div>
+  </div>
+
+  <!-- EXAMPLES bar -->
+  <div class="panel" id="examples-panel">
+    <div class="panel-label">Quick examples</div>
+    <div class="examples-inner" id="examples-inner"></div>
+  </div>
+
+  <!-- Error banner -->
+  <div id="error-banner"></div>
+
+</main>
+
+<script>
+// ==============================================================
+// Examples
+// ==============================================================
+const EXAMPLES = [
+  ['½',            'FractionBox["1","2"]'],
+  ['√x',           'SqrtBox["x"]'],
+  ['x²',           'SuperscriptBox["x","2"]'],
+  ['xᵢ',           'SubscriptBox["x","i"]'],
+  ['x…sub&sup',    'SubsuperscriptBox["x","i","2"]'],
+  ['∑ n=1..∞',     'UnderoverscriptBox["\\\\[Sum]",RowBox[{"n","=","1"}],"\\\\[Infinity]"]'],
+  ['∏ k=0..N',     'UnderoverscriptBox["\\\\[Product]",RowBox[{"k","=","0"}],"N"]'],
+  ['∫₀¹',          'UnderoverscriptBox["\\\\[Integral]","0","1"]'],
+  ['α+β',          'RowBox[{"\\\\[Alpha]","+","\\\\[Beta]"}]'],
+  ['3×3 matrix',   'GridBox[{{"a","b","c"},{"d","e","f"},{"g","h","i"}}]'],
+  ['[bmatrix]',    'RowBox[{"[",GridBox[{{"1","0"},{"0","1"}}],"]"}]'],
+  ['bold red',     'StyleBox["x",FontColor->RGBColor[1,0,0],FontWeight->"Bold"]'],
+  ['piecewise',    'TagBox[GridBox[{{RowBox[{"x","+","1"}],RowBox[{"x",">","0"}]},{"0","True"}}],"Piecewise"]'],
+  ['∛x',           'RadicalBox["x","3"]'],
+  ['α²/2π',        'FractionBox[SuperscriptBox["\\\\[Alpha]","2"],RowBox[{"2","\\\\[Pi]"}]]'],
+];
+
+const exBar = document.getElementById('examples-inner');
+EXAMPLES.forEach(([label, expr]) => {
+  const btn = document.createElement('button');
+  btn.className = 'example-btn';
+  btn.textContent = label;
+  btn.title = expr;
+  btn.onclick = () => { setInput(expr); translate(); };
+  exBar.appendChild(btn);
+});
+
+// ==============================================================
+// DOM refs
+// ==============================================================
+const boxInput    = document.getElementById('box-input');
+const latexOut    = document.getElementById('latex-out');
+const katexDiv    = document.getElementById('katex-display');
+const errorBanner = document.getElementById('error-banner');
+const srvDot      = document.getElementById('srv-dot');
+const srvLabel    = document.getElementById('srv-label');
+const charsCount  = document.getElementById('chars-count');
+const copyBtn     = document.getElementById('copy-btn');
+
+// ==============================================================
+// Server health check
+// ==============================================================
+async function checkServer() {
+  try {
+    const r = await fetch('/api/translate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input: 'SqrtBox["x"]' }),
+    });
+    const { latex, error } = await r.json();
+    if (!error && latex === '\\sqrt{x}') {
+      srvDot.className   = 'dot ok';
+      srvLabel.textContent = 'C++ addon connected';
+    } else {
+      throw new Error(error || `unexpected: ${latex}`);
+    }
+  } catch (e) {
+    srvDot.className   = 'dot err';
+    srvLabel.textContent = 'server not reachable';
+    console.error(e);
+  }
+}
+checkServer();
+
+// ==============================================================
+// Char counter
+// ==============================================================
+boxInput.addEventListener('input', () => {
+  const n = boxInput.value.length;
+  charsCount.textContent = n ? `${n} chars` : '';
+});
+
+// ==============================================================
+// Translate
+// ==============================================================
+let lastLatex = '';
+
+async function translate() {
+  const input = boxInput.value.trim();
+  if (!input) return;
+
+  latexOut.innerHTML = '<span style="color:var(--muted)">translating…</span>';
+  katexDiv.innerHTML = '<span class="placeholder">rendering…</span>';
+  hideError();
+
+  try {
+    const r = await fetch('/api/translate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input }),
+    });
+    const { latex, error } = await r.json();
+
+    if (error) {
+      showError(error);
+      latexOut.classList.add('error');
+      latexOut.textContent = error;
+      katexDiv.innerHTML = '<span class="placeholder">—</span>';
+      return;
+    }
+
+    latexOut.classList.remove('error');
+    lastLatex = latex;
+
+    // Display LaTeX string with syntax colouring
+    latexOut.innerHTML = `<span class="latex-string">${escHtml(latex)}</span>`;
+
+    // KaTeX render
+    renderKatex(latex);
+
+  } catch (e) {
+    showError('Network error — is the server running? (node tester/server.js)');
+  }
+}
+
+function renderKatex(latex) {
+  katexDiv.innerHTML = '';
+  try {
+    window.katex.render(latex, katexDiv, {
+      displayMode: true,
+      throwOnError: false,
+      strict: false,
+      macros: { '\\dd': '\\mathrm{d}', '\\R': '\\mathbb{R}' },
+    });
+  } catch (e) {
+    katexDiv.innerHTML = `<span class="katex-error">KaTeX error: ${escHtml(e.message)}</span>`;
+  }
+}
+
+// ==============================================================
+// Copy LaTeX to clipboard
+// ==============================================================
+copyBtn.addEventListener('click', async () => {
+  if (!lastLatex) return;
+  await navigator.clipboard.writeText(lastLatex).catch(() => {});
+  const orig = copyBtn.textContent;
+  copyBtn.textContent = 'copied!';
+  setTimeout(() => { copyBtn.textContent = orig; }, 1200);
+});
+
+// ==============================================================
+// UI helpers
+// ==============================================================
+function setInput(val) { boxInput.value = val; charsCount.textContent = `${val.length} chars`; }
+function showError(msg) { errorBanner.style.display = 'block'; errorBanner.textContent = '⚠ ' + msg; }
+function hideError()    { errorBanner.style.display = 'none'; }
+function escHtml(s)     { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// Translate on Ctrl/Cmd+Enter
+boxInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); translate(); }
+});
+
+document.getElementById('btn-translate').addEventListener('click', translate);
+document.getElementById('btn-clear').addEventListener('click', () => {
+  boxInput.value = '';
+  charsCount.textContent = '';
+  latexOut.innerHTML = '<span style="color:var(--muted)">— waiting for input —</span>';
+  katexDiv.innerHTML = '<span class="placeholder">— waiting for LaTeX —</span>';
+  lastLatex = '';
+  hideError();
+});
+
+// KaTeX is loaded defer; re-render once it's ready if we already have latex
+document.addEventListener('DOMContentLoaded', () => {
+  if (lastLatex) renderKatex(lastLatex);
+});
+</script>
+</body>
+</html>

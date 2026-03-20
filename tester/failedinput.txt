@@ -1,0 +1,1 @@
+TagBox[RowBox[{"(", "\[NoBreak]", RowBox[{"<<", "1", ">>"}], "\[NoBreak]", ")"}], Short[#1, 20] &]

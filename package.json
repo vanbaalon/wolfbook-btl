@@ -1,0 +1,38 @@
+{
+  "name": "wolfbook",
+  "version": "0.2.0",
+  "description": "Mathematica notebook functionality inside VSCode — fast box→LaTeX renderer",
+  "main": "out/extension.js",
+  "license": "MIT",
+
+  "scripts": {
+    "build":          "./build.sh",
+    "build:native":   "./build.sh native",
+    "build:ts":       "./build.sh ts",
+    "rebuild":        "./build.sh rebuild",
+    "clean":          "./build.sh clean",
+    "smoke":          "./build.sh smoke",
+    "test:wl":        "./build.sh test",
+    "watch":          "tsc -p tsconfig.json --watch",
+    "tester":         "node tester/server.js"
+  },
+
+  "dependencies": {
+    "katex": "^0.16.0"
+  },
+
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/katex": "^0.16.0",
+    "node-addon-api": "^8.0.0",
+    "node-gyp": "^10.0.0",
+    "typescript": "^5.4.0"
+  },
+
+  "gypfile": false,
+
+  "engines": {
+    "node": ">=18.0.0",
+    "vscode": ">=1.85.0"
+  }
+}

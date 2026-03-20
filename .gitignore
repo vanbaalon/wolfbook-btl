@@ -1,0 +1,26 @@
+# --- Node ---
+node_modules/
+npm-debug.log*
+
+# --- TypeScript build output ---
+out/
+
+# --- Native build output ---
+build/
+
+# --- Mathematica character-table generator ---
+# Requires a Mathematica/Wolfram Engine installation to run.
+# The OUTPUT (src/native/special_chars.cpp, renderer/SpecialChars.wl)
+# is committed to the repo so that builds work without Mathematica.
+# Regenerate with:  ./build.sh generate
+renderer/GenerateCharTable.wls
+
+# --- Tester / scratch ---
+tester/node_modules/
+_test_*.js
+
+# --- macOS ---
+.DS_Store
+
+# --- Logs ---
+*.log

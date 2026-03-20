@@ -1,0 +1,58 @@
+name: Build native addon
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+          - os: macos-latest
+            platform: darwin-arm64
+          - os: macos-13
+            platform: darwin-x64
+          - os: windows-latest
+            platform: win32-x64
+
+    runs-on: ${{ matrix.os }}
+    name: Build — ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+
+      - name: Build native addon
+        run: npx node-gyp rebuild
+
+      - name: Build TypeScript
+        run: npx tsc -p tsconfig.json
+
+      - name: Smoke test
+        run: node -e "
+          const addon = require('./build/Release/wolfbook_btl.node');
+          const r = addon.boxToLatex('FractionBox[\"1\",\"2\"]');
+          console.log('Result:', JSON.stringify(r));
+          if (r.error) { console.error('ERROR:', r.error); process.exit(1); }
+          if (r.latex !== '\\\\frac{1}{2}') { console.error('Mismatch:', r.latex); process.exit(1); }
+          console.log('Smoke test passed');
+          "
+
+      - name: Upload native addon
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolfbook_btl-${{ matrix.platform }}
+          path: build/Release/wolfbook_btl.node
+          retention-days: 30
