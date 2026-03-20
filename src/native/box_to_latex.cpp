@@ -25,6 +25,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -146,29 +147,32 @@ private:
         }
 
         // Strip WL precision annotation from numeric string literals.
-        // "3.1415`"  or  "3.1415`15"  → strip backtick+suffix when suffix is
-        // all digits (or empty).  Machine-precision literals like "1.`*^-40"
-        // have a non-digit suffix and are instead rendered as \text{…} with
-        // backtick → $\grave{ }$ and caret → ${}^{\wedge}$ substitutions.
+        //
+        //   "3.1415`"           →  "3.1415"   (empty suffix)
+        //   "3.1415`15"         →  "3.1415"   (integer suffix)
+        //   "3.1415`15.3"       →  "3.1415"   (decimal precision suffix)
+        //   "2.43…`20.15…"      →  "2.43…"    (high-prec literal)
+        //   "0``19.76…"         →  0.×10^{-20} (accuracy notation for zero)
+        //   "n``accuracy"       →  "n"         (non-zero accuracy: strip)
+        //   "1.`*^-40"          →  \text{…}   (machine-precision tiny, keep)
+        //   "Global`x"          →  \text{…}   (WL context sep, not a number)
+
         std::string_view stripped = s;
         auto btPos = s.find('`');
         if (btPos != std::string_view::npos) {
-            std::string_view prefix = s.substr(0, btPos);
-            std::string_view suffix = s.substr(btPos + 1);
+            std::string_view prefix  = s.substr(0, btPos);
+            std::string_view afterBt = s.substr(btPos + 1);
+
+            // A numeric prefix contains only digits, '.', '+', '-', 'e', 'E'.
             bool numericPrefix = !prefix.empty();
             for (char c : prefix)
                 if (!std::isdigit(static_cast<unsigned char>(c)) &&
                     c != '.' && c != '-' && c != '+' && c != 'e' && c != 'E')
                     { numericPrefix = false; break; }
-            bool pureDigitSuffix = true;
-            for (char c : suffix)
-                if (!std::isdigit(static_cast<unsigned char>(c)))
-                    { pureDigitSuffix = false; break; }
-            if (numericPrefix && pureDigitSuffix) {
-                stripped = prefix;  // strip precision annotation
-            } else {
-                // Non-standard suffix: render verbatim inside \text{} with
-                // substitutions for backtick and caret.
+
+            if (!numericPrefix) {
+                // WL context separator (e.g. "Global`x") or other non-number:
+                // render verbatim with backtick → grave substitution.
                 result_ += "\\text{";
                 for (char c : s) {
                     if      (c == '`') result_ += "$\\grave{ }$";
@@ -177,6 +181,68 @@ private:
                 }
                 result_ += '}';
                 return;
+            }
+
+            // Helper: parse a string_view as a double (returns 0.0 on failure).
+            auto parseDouble = [](std::string_view sv) -> double {
+                if (sv.empty()) return 0.0;
+                std::string tmp(sv);
+                char* end = nullptr;
+                double v = std::strtod(tmp.c_str(), &end);
+                return (end > tmp.c_str()) ? v : 0.0;
+            };
+
+            if (!afterBt.empty() && afterBt[0] == '`') {
+                // ── Double backtick: accuracy notation  "n``accuracy" ──────────
+                std::string_view accSv = afterBt.substr(1);
+                bool validAcc = !accSv.empty();
+                for (char c : accSv)
+                    if (!std::isdigit(static_cast<unsigned char>(c)) &&
+                        c != '.' && c != '-' && c != '+')
+                        { validAcc = false; break; }
+
+                // Check whether the prefix is zero (e.g. "0").
+                bool isZero = !prefix.empty();
+                for (char c : prefix)
+                    if (c != '0' && c != '.' && c != '+' && c != '-')
+                        { isZero = false; break; }
+
+                if (isZero && validAcc) {
+                    // "0``<accuracy>" → 0.×10^{-round(accuracy)}
+                    double acc = parseDouble(accSv);
+                    int    exp = static_cast<int>(std::round(acc));
+                    result_ += "0.{\\times}10^{-";
+                    result_ += std::to_string(exp);
+                    result_ += '}';
+                    return;
+                }
+                // Non-zero with accuracy or unparseable: strip the annotation.
+                stripped = prefix;
+
+            } else {
+                // ── Single backtick: precision notation  "n`precision" ──────────
+                // Suffix may be empty, all-digits, or decimal ("20.15…").
+                // Also handle machine-precision form like "*^-40".
+                bool numericSuffix = true;  // empty suffix counts as numeric
+                for (char c : afterBt)
+                    if (!std::isdigit(static_cast<unsigned char>(c)) &&
+                        c != '.' && c != '-' && c != '+')
+                        { numericSuffix = false; break; }
+
+                if (numericSuffix) {
+                    stripped = prefix;   // strip precision annotation
+                } else {
+                    // Non-numeric suffix (e.g. "*^-40"): render as \text{} with
+                    // backtick → grave and caret → wedge substitutions.
+                    result_ += "\\text{";
+                    for (char c : s) {
+                        if      (c == '`') result_ += "$\\grave{ }$";
+                        else if (c == '^') result_ += "${}^{\\wedge}$";
+                        else               result_ += c;
+                    }
+                    result_ += '}';
+                    return;
+                }
             }
         }
 
