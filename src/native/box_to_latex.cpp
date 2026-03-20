@@ -514,7 +514,8 @@ private:
         if (n < 2) return;
         std::string base = translateToString(pr_.children[a]);
         std::string sub  = translateToString(pr_.children[a + 1]);
-        result_ += base;
+        if (base.empty()) result_ += "{}";
+        else              result_ += base;
         result_ += '_';
         if (needsBraces(sub)) { result_ += '{'; result_ += sub; result_ += '}'; }
         else                  { result_ += sub; }
@@ -526,7 +527,8 @@ private:
         std::string base = translateToString(pr_.children[a]);
         std::string sub  = translateToString(pr_.children[a + 1]);
         std::string sup  = translateToString(pr_.children[a + 2]);
-        result_ += base;
+        if (base.empty()) result_ += "{}";
+        else              result_ += base;
         result_ += '_';
         if (needsBraces(sub)) { result_ += '{'; result_ += sub; result_ += '}'; }
         else                  { result_ += sub; }
