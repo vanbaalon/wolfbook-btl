@@ -70,6 +70,60 @@ static const std::unordered_map<std::string_view, std::string_view> kNamedColors
 // ----------------------------------------------------------
 enum class TokenClass { Number, SingleChar, MultiLetter, Operator };
 
+// Truncate a decimal number string (digits + optional '.', no sign) to
+// nSig significant figures, rounding the last kept digit.
+// Returns the input unmodified when it already has ≤ nSig sig figs.
+static std::string truncateToSigFigs(std::string_view sv, int nSig) {
+    if (nSig <= 0 || sv.empty()) return std::string(sv);
+
+    // Build pure-digit string; remember where the decimal point sits.
+    std::string digits;
+    digits.reserve(sv.size());
+    int dotIdx = -1;   // index in `digits` after which '.' falls
+    for (char c : sv) {
+        if (c == '.') { dotIdx = (int)digits.size(); }
+        else          { digits += c; }
+    }
+    if (dotIdx < 0) dotIdx = (int)digits.size();  // integer input
+
+    // First significant (non-zero) digit.
+    int firstSig = -1;
+    for (int i = 0; i < (int)digits.size(); ++i)
+        if (digits[i] != '0') { firstSig = i; break; }
+    if (firstSig < 0) return std::string(sv);  // all zeros
+
+    int truncPos = firstSig + nSig;
+    if (truncPos >= (int)digits.size())
+        return std::string(sv);  // fewer digits than requested — keep as-is
+
+    // Round: inspect the first discarded digit.
+    std::string d = digits.substr(0, truncPos);
+    if (digits[truncPos] >= '5') {
+        int carry = 1;
+        for (int i = (int)d.size() - 1; i >= 0 && carry; --i) {
+            int val = (d[i] - '0') + carry;
+            d[i]   = (char)('0' + val % 10);
+            carry  = val / 10;
+        }
+        if (carry) { d = "1" + d; ++dotIdx; }
+    }
+
+    // Re-insert the decimal point.
+    int dLen = (int)d.size();
+    std::string result;
+    if (dotIdx <= 0) {
+        result = "0.";
+        for (int i = 0; i < -dotIdx; ++i) result += '0';
+        result += d;
+    } else if (dotIdx >= dLen) {
+        result = d;
+        for (int i = dLen; i < dotIdx; ++i) result += '0';
+    } else {
+        result = d.substr(0, dotIdx) + '.' + d.substr(dotIdx);
+    }
+    return result;
+}
+
 static TokenClass classifyToken(std::string_view s) {
     if (s.empty()) return TokenClass::Operator;
     if (s.size() == 1) {
@@ -149,14 +203,15 @@ private:
         // Strip WL precision annotation from numeric string literals.
         //
         //   "3.1415`"           →  "3.1415"   (empty suffix)
-        //   "3.1415`15"         →  "3.1415"   (integer suffix)
-        //   "3.1415`15.3"       →  "3.1415"   (decimal precision suffix)
-        //   "2.43…`20.15…"      →  "2.43…"    (high-prec literal)
+        //   "3.1415`15"         →  "3.1415"   (integer/empty suffix, no trunc)
+        //   "3.1415`15.3"       →  "3.1415"   (prec > digits, no trunc)
+        //   "2.43…`20.15…"      →  "2.4320…"  (truncated to 20 sig figs)
         //   "0``19.76…"         →  0.×10^{-20} (accuracy notation for zero)
         //   "n``accuracy"       →  "n"         (non-zero accuracy: strip)
         //   "1.`*^-40"          →  \text{…}   (machine-precision tiny, keep)
         //   "Global`x"          →  \text{…}   (WL context sep, not a number)
 
+        std::string      ownedStripped;   // owns buffer when truncation is used
         std::string_view stripped = s;
         auto btPos = s.find('`');
         if (btPos != std::string_view::npos) {
@@ -230,7 +285,16 @@ private:
                         { numericSuffix = false; break; }
 
                 if (numericSuffix) {
-                    stripped = prefix;   // strip precision annotation
+                    // Parse the precision value and truncate the number to
+                    // that many significant digits.  Empty suffix → just strip.
+                    double prec = afterBt.empty() ? 0.0 : parseDouble(afterBt);
+                    int nSig = (prec > 0.5) ? static_cast<int>(std::round(prec)) : 0;
+                    if (nSig > 0) {
+                        ownedStripped = truncateToSigFigs(prefix, nSig);
+                        stripped = ownedStripped;
+                    } else {
+                        stripped = prefix;
+                    }
                 } else {
                     // Non-numeric suffix (e.g. "*^-40"): render as \text{} with
                     // backtick → grave and caret → wedge substitutions.
