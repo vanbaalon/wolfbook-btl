@@ -59,6 +59,16 @@ classifyString[s_String] :=
       s,
     StringLength[s] === 1,
       s,
+    (* Standard LaTeX math operators — use \cmd for proper spacing *)
+    MemberQ[{"sin","cos","tan","cot","sec","csc",
+             "arcsin","arccos","arctan",
+             "sinh","cosh","tanh","coth",
+             "exp","log","ln","lg",
+             "lim","limsup","liminf","max","min","sup","inf",
+             "det","dim","gcd","ker","deg","arg","hom","Pr"}, s],
+      "\\" <> s,
+    MemberQ[{"lcm","Re","Im","tr","Tr","diag","rank","sgn","sign","mod"}, s],
+      "\\operatorname{" <> s <> "}",
     StringMatchQ[s, LetterCharacter..],
       "\\mathrm{" <> s <> "}",
     True,
@@ -88,6 +98,19 @@ boxToLatex[RowBox[children_List]] :=
   StringJoin[boxToLatex /@ children]
 
 (* ---- Superscript / Subscript / SubSuperscript ---- *)
+
+(* Derivative primes: f' not f^{^{\prime}} *)
+boxToLatex[SuperscriptBox[b_, "\[Prime]"]] :=
+  boxToLatex[b] <> "'"
+boxToLatex[SuperscriptBox[b_, "\[DoublePrime]"]] :=
+  boxToLatex[b] <> "''"
+boxToLatex[SuperscriptBox[b_, RowBox[ps:{("\[Prime]" | "\[DoublePrime]")..}]]] :=
+  boxToLatex[b] <> StringJoin[ps /. {"\[Prime]" -> "'", "\[DoublePrime]" -> "''"}]
+
+(* Comma notation for primes: "," = ', ",," = '', etc. *)
+boxToLatex[SuperscriptBox[b_, s_String, ___]] /; StringMatchQ[s, ","..]  :=
+  boxToLatex[b] <> StringJoin[Table["'", StringLength[s]]]
+
 boxToLatex[SuperscriptBox[b_, e_]] :=
   "{" <> boxToLatex[b] <> "}^{" <> boxToLatex[e] <> "}"
 
@@ -115,6 +138,14 @@ boxToLatex[UnderscriptBox[base_, under_]] :=
       "\\underset{" <> boxToLatex[under] <> "}{" <> lb <> "}"
     ]
   ]
+
+(* Dot derivatives: \dot{f} not \overset{.}{f} *)
+boxToLatex[OverscriptBox[base_, "."]] :=
+  "\\dot{" <> boxToLatex[base] <> "}"
+boxToLatex[OverscriptBox[base_, ".."]] :=
+  "\\ddot{" <> boxToLatex[base] <> "}"
+boxToLatex[OverscriptBox[base_, "\[DoubleDot]"]] :=
+  "\\ddot{" <> boxToLatex[base] <> "}"
 
 boxToLatex[OverscriptBox[base_, over_]] :=
   Module[{lb = boxToLatex[base]},
