@@ -123,12 +123,17 @@ run_wl_tests() {
 
 copy_to_ext() {
   local ADDON="$ROOT/build/Release/wolfbook_btl.node"
-  local EXT_DEV="$ROOT/../VSCodeWolframExtension/Extension Development/wllatex-addon/wolfbook_btl.node"
-  if [ -f "$ADDON" ] && [ -d "$(dirname "$EXT_DEV")" ]; then
-    cp "$ADDON" "$EXT_DEV"
+  local EXT_DEV_DIR="$ROOT/../VSCodeWolframExtension/Extension Development/wllatex-addon"
+  if [ -f "$ADDON" ] && [ -d "$EXT_DEV_DIR" ]; then
+    cp "$ADDON" "$EXT_DEV_DIR/wolfbook_btl.node"
     ok "Copied wolfbook_btl.node → Extension Development/wllatex-addon/"
+    # Also overwrite the platform-specific prebuilt so it isn't loaded in preference
+    if [ -d "$EXT_DEV_DIR/prebuilt" ]; then
+      cp "$ADDON" "$EXT_DEV_DIR/prebuilt/wolfbook_btl-darwin-arm64.node"
+      ok "Copied wolfbook_btl.node → Extension Development/wllatex-addon/prebuilt/wolfbook_btl-darwin-arm64.node"
+    fi
   else
-    warn "Extension dev folder not found — skipping auto-copy (expected: $EXT_DEV)"
+    warn "Extension dev folder not found — skipping auto-copy (expected: $EXT_DEV_DIR)"
   fi
 }
 

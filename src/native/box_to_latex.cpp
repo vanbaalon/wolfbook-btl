@@ -588,6 +588,7 @@ private:
         else if (head == "PaneSelectorBox")     translatePaneSelectorBox(argStart, argCount);
         else if (head == "DynamicBox")          { /* suppress */ }
         else if (head == "Dynamic")             { /* suppress */ }
+        else if (head == "DynamicModuleBox")    { /* complex dynamic UI widget — suppress */ }
         else if (head == "MouseAppearanceTag")  { /* suppress */ }
         else if (head == "GraphicsBox")         result_ += "[graphics]";
         else if (head == "RGBColor")            { /* colour node — handled by StyleBox */ }
@@ -1264,8 +1265,162 @@ private:
     }
 
     // ---- InterpretationBox[display, interpretation, opts…] ----
-    void translateInterpretationBox(uint32_t a, uint32_t /*n*/) {
+    void translateInterpretationBox(uint32_t a, uint32_t n) {
+        // When the interpretation is InformationData (from ?Symbol / Information[]),
+        // render a structured usage block instead of the complex UI display form.
+        if (n >= 2) {
+            const Node& interpNode = pr_.node(pr_.children[a + 1]);
+            if (interpNode.kind == NodeKind::Expr &&
+                pr_.headName(interpNode) == "InformationData") {
+                translateInformationData(interpNode);
+                return;
+            }
+        }
         translate(pr_.children[a]);
+    }
+
+    // ---- InformationData[<|"FullName"->…, "Usage"->…, …|>, False] ----
+    // Renders the symbol name and usage text extracted from the parsed Rule children.
+    // (The <|…|> association is partially parsed by the WL parser — Rule nodes
+    //  whose values are plain strings or symbols survive; nested associations don't.)
+    void translateInformationData(const Node& infoNode) {
+        std::string_view fullName, usageStr;
+        for (uint32_t i = 1; i < infoNode.childrenCount; ++i) {
+            const Node& ch = pr_.node(pr_.children[infoNode.childrenStart + i]);
+            if (ch.kind != NodeKind::Rule && ch.kind != NodeKind::RuleDelayed) continue;
+            if (ch.childrenCount < 2) continue;
+            const Node& k = pr_.node(pr_.children[ch.childrenStart]);
+            const Node& v = pr_.node(pr_.children[ch.childrenStart + 1]);
+            if (!k.isString()) continue;
+            std::string_view ks = pr_.str(k);
+            if (ks == "FullName" && v.isString()) fullName = pr_.str(v);
+            if (ks == "Usage"    && v.isString()) usageStr = pr_.str(v);
+        }
+
+        // Derive short name: strip WL context prefix ("System`Integrate" → "Integrate")
+        std::string_view shortName = fullName;
+        {
+            auto p = shortName.rfind('`');
+            if (p != std::string_view::npos) shortName = shortName.substr(p + 1);
+        }
+
+        // The Usage value may be wrapped in an extra layer of WL string quoting
+        // (starts and ends with literal ") — strip if present.
+        if (usageStr.size() >= 2 && usageStr.front() == '"' && usageStr.back() == '"')
+            usageStr = usageStr.substr(1, usageStr.size() - 2);
+
+        result_ += "\\begin{array}{l}";
+        if (!shortName.empty()) {
+            result_ += "\\textbf{";
+            result_ += shortName;
+            result_ += "}";
+        }
+        if (!usageStr.empty()) {
+            result_ += "\\\\ ";
+            renderInfoUsageString(usageStr);
+        }
+        result_ += "\\end{array}";
+    }
+
+    // Locate the next \!\(\* … \) embedded StandardForm box in a parsed usage string.
+    // After WL string parsing, the sequence appears as literal bytes:
+    //   0x5c 0x21 0x5c 0x28 0x5c 0x2a  (\!\(\*)
+    // Returns {patStart, contentStart, contentEnd}: s[contentStart..contentEnd) is
+    // the raw box expression.  All three fields are npos when nothing is found.
+    struct InfoBox { size_t patStart, cStart, cEnd; };
+    static InfoBox findNextInfoBox(std::string_view s, size_t from) {
+        const size_t npos = std::string_view::npos;
+        for (size_t i = from; i + 5 < s.size(); ++i) {
+            if (s[i]   == '\\' && s[i+1] == '!' &&
+                s[i+2] == '\\' && s[i+3] == '(' &&
+                s[i+4] == '\\' && s[i+5] == '*') {
+                size_t cs = i + 6;
+                size_t j  = cs;
+                int depth = 0;
+                while (j + 1 < s.size()) {
+                    if (s[j] == '\\' && s[j+1] == '(') { depth++; j += 2; continue; }
+                    if (s[j] == '\\' && s[j+1] == ')') {
+                        if (depth == 0) return { i, cs, j };
+                        depth--; j += 2; continue;
+                    }
+                    ++j;
+                }
+                return { i, cs, j }; // no \) found — return to end
+            }
+        }
+        return { npos, npos, npos };
+    }
+
+    // Render a Usage string containing \!\(\*BoxExpr\) embedded StandardForm.
+    // We are inside \begin{array}{l}, so no outer $ delimiters are needed.
+    void renderInfoUsageString(std::string_view s) {
+        size_t pos = 0;
+        while (pos < s.size()) {
+            InfoBox ib = findNextInfoBox(s, pos);
+            if (ib.patStart == std::string_view::npos) {
+                appendInfoText(s.substr(pos));
+                break;
+            }
+            if (ib.patStart > pos) appendInfoText(s.substr(pos, ib.patStart - pos));
+
+            // Pre-process box expression: replace \" with " so WLParser can
+            // handle string literals.  (Needed when usage comes from the visual
+            // display form; a no-op when coming from InformationData directly.)
+            std::string_view rawExpr = s.substr(ib.cStart, ib.cEnd - ib.cStart);
+            std::string boxExpr;
+            boxExpr.reserve(rawExpr.size());
+            for (size_t i = 0; i < rawExpr.size(); ++i) {
+                if (rawExpr[i] == '\\' && i + 1 < rawExpr.size() && rawExpr[i+1] == '"') {
+                    boxExpr += '"'; ++i;
+                } else {
+                    boxExpr += rawExpr[i];
+                }
+            }
+            try {
+                ParseResult innerPr;
+                WLParser{}.parseInto(boxExpr, innerPr);
+                result_ += BoxTranslator(innerPr).run();
+            } catch (...) {
+                result_ += "\\cdots";
+            }
+            pos = (ib.cEnd + 2 <= s.size()) ? ib.cEnd + 2 : s.size(); // skip past \)
+        }
+    }
+
+    // Emit a plain-text segment (inside \begin{array}{l}, i.e. in math mode),
+    // escaping LaTeX special characters.  Newline (0x0a) → \\ row break.
+    void appendInfoText(std::string_view text) {
+        size_t i = 0;
+        while (i < text.size()) {
+            if (text[i] == '\n') {
+                result_ += "\\\\ ";
+                ++i;
+                continue;
+            }
+            // Accumulate plain segment up to next \n
+            size_t j = i;
+            while (j < text.size() && text[j] != '\n') ++j;
+            if (j > i) {
+                result_ += "\\text{";
+                for (size_t k = i; k < j; ++k) {
+                    char c = text[k];
+                    switch (c) {
+                        case '"':  break;   // strip stray WL string quotes
+                        case '#':  result_ += "\\#"; break;
+                        case '%':  result_ += "\\%"; break;
+                        case '&':  result_ += "\\&"; break;
+                        case '_':  result_ += "\\_ "; break;
+                        case '{':  result_ += "\\{"; break;
+                        case '}':  result_ += "\\}"; break;
+                        case '$':  result_ += "\\$"; break;
+                        case '\\': result_ += "\\textbackslash{}"; break;
+                        default:   result_ += c;
+                    }
+                }
+                result_ += '}';
+            }
+            i = j;
+        }
     }
 
     // ---- FormBox[expr, form] ----
