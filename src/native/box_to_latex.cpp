@@ -388,6 +388,11 @@ private:
         auto mapped = wlCharToLatex(stripped);
         if (mapped.data() != nullptr) {
             result_ += mapped;
+            // If the command ends with a letter (e.g. \intop, \alpha) ensure
+            // it cannot merge with the next RowBox sibling — insert a delimiter
+            // space so "\intop" + "f" doesn't become the undefined "\intopf".
+            if (!mapped.empty() && std::isalpha(static_cast<unsigned char>(mapped.back())))
+                result_ += ' ';
             return;
         }
         // String may embed one or more \[Name] sequences mixed with plain text

@@ -82,9 +82,9 @@ const cases = [
   ['SubscriptBox["x","i"]',                  'x_i'],
   ['RowBox[{"x","+","y"}]',                  'x+y'],
   ['UnderoverscriptBox["\\\\[Sum]",RowBox[{"n","=","1"}],"\\\\[Infinity]"]',
-                                             '\\sum_{n=1}^{\\infty}'],
-  ['"\\\\[Alpha]"',                          '\\alpha'],
-  ['"\\\\[Infinity]"',                       '\\infty'],
+                                             '\\sum _{n=1}^{\\infty }'],
+  ['"\\\\[Alpha]"',                          '\\alpha '],
+  ['"\\\\[Infinity]"',                       '\\infty '],
 ];
 
 let passed = 0, failed = 0;

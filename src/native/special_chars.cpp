@@ -1011,6 +1011,9 @@ std::string_view wlCharToLatex(std::string_view wlToken) {
 }
 
 bool isLargeOperator(std::string_view latexCmd) {
+    // Trim trailing guard spaces that translateString may append
+    while (!latexCmd.empty() && latexCmd.back() == ' ')
+        latexCmd.remove_suffix(1);
     return kLargeOps.count(latexCmd) != 0;
 }
 
