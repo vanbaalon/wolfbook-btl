@@ -430,6 +430,8 @@ private:
         // WL infix operators that must map to LaTeX commands
         if (stripped == "->")  { result_ += "\\to ";     return; }
         if (stripped == ":>")  { result_ += "\\mapsto "; return; }
+        if (stripped == "|->") { result_ += "\\mapsto "; return; } // Function[{x},body] mapsto arrow
+        if (stripped == "&")   { result_ += "\\& ";      return; } // pure-function ampersand
         // WL relational operators that map to single LaTeX symbols
         if (stripped == "==")  { result_ += '=';         return; }
         if (stripped == "!=")  { result_ += "\\neq ";    return; }
@@ -437,6 +439,12 @@ private:
         if (stripped == "<=")  { result_ += "\\leq ";    return; }
         // Bare underscore (WL Blank pattern) — escape it in LaTeX math
         if (stripped == "_")   { result_ += "\\_";       return; }
+        // WL Slot: #, #1, #2, ... — pure function argument placeholder
+        if (!stripped.empty() && stripped[0] == '#') {
+            result_ += "\\# ";
+            result_ += stripped.substr(1);  // trailing digit(s) or empty
+            return;
+        }
         // Otherwise classify the (possibly stripped) plain string
         auto cls = classifyToken(stripped);
         switch (cls) {
@@ -474,11 +482,51 @@ private:
                     else          result_ += c;
                 }
                 break;
-            case TokenClass::MultiLetter:
-                result_ += "\\mathrm{";
-                result_ += stripped;
-                result_ += '}';
+            case TokenClass::MultiLetter: {
+                // Standard LaTeX math operators → use \cmd directly (no \mathrm).
+                // These have proper spacing built into LaTeX's operator font.
+                static const std::unordered_map<std::string_view, std::string_view> kMathOps {
+                    // Trig
+                    {"sin","\\sin"},{"cos","\\cos"},{"tan","\\tan"},
+                    {"cot","\\cot"},{"sec","\\sec"},{"csc","\\csc"},
+                    // Inverse trig
+                    {"arcsin","\\arcsin"},{"arccos","\\arccos"},{"arctan","\\arctan"},
+                    // Hyperbolic
+                    {"sinh","\\sinh"},{"cosh","\\cosh"},{"tanh","\\tanh"},{"coth","\\coth"},
+                    // Exp / log
+                    {"exp","\\exp"},{"log","\\log"},{"ln","\\ln"},{"lg","\\lg"},
+                    // Limits / bounds
+                    {"lim","\\lim"},{"limsup","\\limsup"},{"liminf","\\liminf"},
+                    {"max","\\max"},{"min","\\min"},{"sup","\\sup"},{"inf","\\inf"},
+                    // Algebra / misc
+                    {"det","\\det"},{"dim","\\dim"},{"gcd","\\gcd"},{"lcm","\\operatorname{lcm}"},
+                    {"ker","\\ker"},{"deg","\\deg"},{"arg","\\arg"},
+                    {"hom","\\hom"},{"Pr","\\Pr"},{"Re","\\operatorname{Re}"},{"Im","\\operatorname{Im}"},
+                    {"tr","\\operatorname{tr}"},{"Tr","\\operatorname{Tr}"},
+                    {"diag","\\operatorname{diag}"},{"rank","\\operatorname{rank}"},
+                    {"sgn","\\operatorname{sgn}"},{"sign","\\operatorname{sign}"},
+                    {"mod","\\operatorname{mod}"},
+                    // WL capitalised function names (StandardForm / InputForm output)
+                    {"Sin","\\sin"},{"Cos","\\cos"},{"Tan","\\tan"},
+                    {"Cot","\\cot"},{"Sec","\\sec"},{"Csc","\\csc"},
+                    {"Sinh","\\sinh"},{"Cosh","\\cosh"},{"Tanh","\\tanh"},{"Coth","\\coth"},
+                    {"ArcSin","\\arcsin"},{"ArcCos","\\arccos"},{"ArcTan","\\arctan"},
+                    {"ArcCot","\\operatorname{arccot}"},{"ArcSec","\\operatorname{arcsec}"},{"ArcCsc","\\operatorname{arccsc}"},
+                    {"ArcSinh","\\operatorname{arcsinh}"},{"ArcCosh","\\operatorname{arccosh}"},{"ArcTanh","\\operatorname{arctanh}"},
+                    {"Exp","\\exp"},{"Log","\\log"},{"Log2","\\log_2"},{"Log10","\\log_{10}"},
+                    {"Max","\\max"},{"Min","\\min"},{"Det","\\det"},{"GCD","\\gcd"},{"LCM","\\operatorname{lcm}"},
+                    {"Abs","\\left|\\cdot\\right|"}, // rarely appears as bare string but map defensively
+                };
+                auto oit = kMathOps.find(stripped);
+                if (oit != kMathOps.end()) {
+                    result_ += oit->second;
+                } else {
+                    result_ += "\\mathrm{";
+                    result_ += stripped;
+                    result_ += '}';
+                }
                 break;
+            }
         }
     }
 
@@ -664,9 +712,72 @@ private:
         return true;
     }
 
+    // ---- Helper: count derivative primes in a box-expression node ----
+    // Returns the number of primes if the node is purely prime characters
+    // (single \[Prime], \[DoublePrime], or a RowBox concatenation of them),
+    // and 0 if the node contains anything else.
+    int countPrimes(uint32_t idx) {
+        const Node& n = pr_.node(idx);
+        if (n.kind == NodeKind::String) {
+            std::string_view s = pr_.str(n);
+            if (s == "\\[Prime]" || s == "\u2032") return 1;
+            if (s == "\\[DoublePrime]" || s == "\u2033") return 2;
+            if (s == "'") return 1;
+            // Comma notation: "," = 1 prime, ",," = 2, ",,," = 3, etc.
+            if (!s.empty() && s.find_first_not_of(',') == std::string_view::npos) return (int)s.size();
+            return 0;
+        }
+        if (n.kind == NodeKind::Expr) {
+            std::string_view head = pr_.str(pr_.node(pr_.children[n.childrenStart]));
+            if (head != "RowBox") return 0;
+            // RowBox[{children...}] — check the List argument
+            if (n.childrenCount < 2) return 0;
+            const Node& listNode = pr_.node(pr_.children[n.childrenStart + 1]);
+            if (listNode.kind != NodeKind::List) return 0;
+            int total = 0;
+            for (uint32_t i = 0; i < listNode.childrenCount; ++i) {
+                int p = countPrimes(pr_.children[listNode.childrenStart + i]);
+                if (p == 0) return 0;
+                total += p;
+            }
+            return total;
+        }
+        return 0;
+    }
+
+    // ---- Helper: detect dot/ddot OverscriptBox patterns ----
+    // Returns "dot" or "ddot" if the over-content is a single- or double-dot,
+    // empty string otherwise.
+    std::string detectDotOver(uint32_t idx) {
+        const Node& n = pr_.node(idx);
+        if (n.kind == NodeKind::String) {
+            std::string_view s = pr_.str(n);
+            if (s == "." || s == "\u02D9" || s == "\\[Dot]") return "dot";
+            if (s == ".." || s == "\u00A8" || s == "\\[DoubleDot]") return "ddot";
+        }
+        // The over content might translate to \dot{} or \ddot{} via special_chars
+        std::string translated = translateToString(idx);
+        if (translated == "\\dot{ }" || translated == "\\dot{}") return "dot";
+        if (translated == "\\ddot{ }" || translated == "\\ddot{}") return "ddot";
+        return "";
+    }
+
     // ---- SuperscriptBox[base, exp] ----
+    // Special handling for derivative primes: SuperscriptBox["f", "\[Prime]"]
+    // should produce f' not f^{^{\prime}} (double superscript).
     void translateSuperscriptBox(uint32_t a, uint32_t n) {
         if (n < 2) return;
+
+        // Check if the exponent is a derivative prime marker before translating
+        int primeCount = countPrimes(pr_.children[a + 1]);
+        if (primeCount > 0) {
+            std::string base = translateToString(pr_.children[a]);
+            result_ += base;
+            for (int i = 0; i < primeCount; ++i)
+                result_ += '\'';
+            return;
+        }
+
         std::string base = translateToString(pr_.children[a]);
         std::string exp  = translateToString(pr_.children[a + 1]);
         result_ += base;
@@ -754,6 +865,16 @@ private:
     // ---- OverscriptBox[base, over] ----
     void translateOverscriptBox(uint32_t a, uint32_t n) {
         if (n < 2) return;
+        // Detect dot/ddot notation for time derivatives
+        std::string dotKind = detectDotOver(pr_.children[a + 1]);
+        if (!dotKind.empty()) {
+            result_ += '\\';
+            result_ += dotKind;
+            result_ += '{';
+            translate(pr_.children[a]);
+            result_ += '}';
+            return;
+        }
         std::string base = translateToString(pr_.children[a]);
         if (isLargeOperator(base)) {
             result_ += base;

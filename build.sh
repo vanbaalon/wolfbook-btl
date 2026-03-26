@@ -121,6 +121,17 @@ run_wl_tests() {
   ok "WL tests done"
 }
 
+copy_to_ext() {
+  local ADDON="$ROOT/build/Release/wolfbook_btl.node"
+  local EXT_DEV="$ROOT/../VSCodeWolframExtension/Extension Development/wllatex-addon/wolfbook_btl.node"
+  if [ -f "$ADDON" ] && [ -d "$(dirname "$EXT_DEV")" ]; then
+    cp "$ADDON" "$EXT_DEV"
+    ok "Copied wolfbook_btl.node → Extension Development/wllatex-addon/"
+  else
+    warn "Extension dev folder not found — skipping auto-copy (expected: $EXT_DEV)"
+  fi
+}
+
 clean() {
   step "Cleaning build artefacts"
   rm -rf build/ out/
@@ -137,6 +148,7 @@ case "$TARGET" in
     build_native incremental
     build_ts
     smoke_test
+    copy_to_ext
     echo -e "\n${GREEN}${BOLD}Build complete.${RESET}"
     ;;
   native)
@@ -144,6 +156,7 @@ case "$TARGET" in
     check_npm_deps
     build_native incremental
     smoke_test
+    copy_to_ext
     ;;
   ts)
     check_node
@@ -156,6 +169,7 @@ case "$TARGET" in
     build_native rebuild
     build_ts
     smoke_test
+    copy_to_ext
     echo -e "\n${GREEN}${BOLD}Full rebuild complete.${RESET}"
     ;;
   clean)
