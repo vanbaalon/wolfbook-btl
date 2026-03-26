@@ -158,6 +158,7 @@ public:
         result_.reserve(std::max<size_t>(512,
             pr_.strings.size() * 8 + pr_.nodes.size() * 4));
         translate(pr_.root);
+        postProcess();
         return std::move(result_);
     }
 
@@ -704,6 +705,62 @@ private:
             translate(pr_.children[lStart + i]);
     }
 
+    // ---- Helper: does the base expression contain an unbraced ^ or _?
+    // If so it must be wrapped in {} when used as a super/subscript base to
+    // prevent the "double superscript / double subscript" LaTeX error.
+    static bool baseNeedsBracing(const std::string& s) {
+        int depth = 0;
+        for (char c : s) {
+            if      (c == '{') ++depth;
+            else if (c == '}') { if (depth > 0) --depth; }
+            else if ((c == '^' || c == '_') && depth == 0) return true;
+        }
+        return false;
+    }
+
+    // ---- Post-processing atom scanners ----
+    // Walk backwards from `end` (exclusive) over one LaTeX atom:
+    //   {balanced block}  |  \command[guard-space]  |  single char
+    // Returns the start index of that atom.
+    static size_t scanAtomBackward(const std::string& s, size_t end) {
+        if (end == 0) return 0;
+        size_t i = end;
+        if (i > 0 && s[i-1] == ' ') --i;   // skip guard space
+        if (i == 0) return 0;
+        if (s[i-1] == '}') {
+            int d = 0;
+            while (i > 0) { --i; if (s[i]=='}') ++d; else if (s[i]=='{') { if (--d==0) return i; } }
+            return 0;
+        }
+        if (std::isalpha(static_cast<unsigned char>(s[i-1])) ||
+            std::isdigit(static_cast<unsigned char>(s[i-1]))) {
+            while (i > 0 && (std::isalnum(static_cast<unsigned char>(s[i-1])))) --i;
+            if (i > 0 && s[i-1] == '\\') return i - 1;
+            return i;
+        }
+        return i - 1;
+    }
+
+    // Walk forward from `pos` over one LaTeX atom. Returns position after atom.
+    static size_t skipAtomForward(const std::string& s, size_t pos) {
+        if (pos >= s.size()) return pos;
+        if (s[pos] == '{') {
+            int d = 0;
+            while (pos < s.size()) {
+                if (s[pos]=='{') ++d; else if (s[pos]=='}') { if (--d==0) return pos+1; }
+                ++pos;
+            }
+            return pos;
+        }
+        if (s[pos] == '\\') {
+            ++pos;
+            while (pos < s.size() && std::isalpha(static_cast<unsigned char>(s[pos]))) ++pos;
+            if (pos < s.size() && s[pos] == ' ') ++pos;  // skip guard space
+            return pos;
+        }
+        return pos + 1;
+    }
+
     // ---- Helper: does a translated LaTeX string need {…} as a script arg?
     // A single ASCII character or a bare word-command (\alpha, \pi, …) needs
     // no grouping; everything else (multi-token, command with arguments, …) does.
@@ -778,7 +835,8 @@ private:
         int primeCount = countPrimes(pr_.children[a + 1]);
         if (primeCount > 0) {
             std::string base = translateToString(pr_.children[a]);
-            result_ += base;
+            if (baseNeedsBracing(base)) { result_ += '{'; result_ += base; result_ += '}'; }
+            else result_ += base;
             for (int i = 0; i < primeCount; ++i)
                 result_ += '\'';
             return;
@@ -786,7 +844,8 @@ private:
 
         std::string base = translateToString(pr_.children[a]);
         std::string exp  = translateToString(pr_.children[a + 1]);
-        result_ += base;
+        if (baseNeedsBracing(base)) { result_ += '{'; result_ += base; result_ += '}'; }
+        else result_ += base;
         result_ += '^';
         if (needsBraces(exp)) { result_ += '{'; result_ += exp; result_ += '}'; }
         else                  { result_ += exp; }
@@ -797,8 +856,9 @@ private:
         if (n < 2) return;
         std::string base = translateToString(pr_.children[a]);
         std::string sub  = translateToString(pr_.children[a + 1]);
-        if (base.empty()) result_ += "{}";
-        else              result_ += base;
+        if      (base.empty())            result_ += "{}";
+        else if (baseNeedsBracing(base)) { result_ += '{'; result_ += base; result_ += '}'; }
+        else                              result_ += base;
         result_ += '_';
         if (needsBraces(sub)) { result_ += '{'; result_ += sub; result_ += '}'; }
         else                  { result_ += sub; }
@@ -810,8 +870,9 @@ private:
         std::string base = translateToString(pr_.children[a]);
         std::string sub  = translateToString(pr_.children[a + 1]);
         std::string sup  = translateToString(pr_.children[a + 2]);
-        if (base.empty()) result_ += "{}";
-        else              result_ += base;
+        if      (base.empty())            result_ += "{}";
+        else if (baseNeedsBracing(base)) { result_ += '{'; result_ += base; result_ += '}'; }
+        else                              result_ += base;
         result_ += '_';
         if (needsBraces(sub)) { result_ += '{'; result_ += sub; result_ += '}'; }
         else                  { result_ += sub; }
@@ -1668,6 +1729,73 @@ private:
         if (open == "\\[LeftBracketingBar]"    && close == "\\[RightBracketingBar]")    return "vmatrix";
         if (open == "\\[LeftDoubleBracketingBar]" && close == "\\[RightDoubleBracketingBar]") return "Vmatrix";
         return {};  // not a recognised matrix context
+    }
+
+    // ================================================================
+    // Post-processing stage — runs on result_ after full tree translation.
+    // Fixes string-level LaTeX issues that are hard to prevent at parse time.
+    // ================================================================
+
+    // Fix 1: Trim trailing guard spaces (cosmetic — the spaces are harmless in
+    // math mode but make displayed LaTeX strings neater).
+    // Fix 2: Double superscript / subscript safety net.
+    //   Even though translateSuperscriptBox/etc wrap bases that already carry
+    //   ^/_ (via baseNeedsBracing), unexpected parse paths could still produce
+    //   sequences like `f^{A}^{B}`.  Detect and fix them here.
+    void postProcess() {
+        // ── Fix 1: trailing space ───────────────────────────────────────────
+        while (!result_.empty() && result_.back() == ' ')
+            result_.pop_back();
+
+        // ── Fix 2: double scripts ───────────────────────────────────────────
+        fixDoubleScripts();
+    }
+
+    // Repeatedly scan depth-0 ^ and _ positions; when two consecutive script
+    // operators share no base between them (argEnd[k-1] == scriptPos[k]),
+    // wrap [baseStart[k-1], scriptPos[k]) in braces so the second operator
+    // attaches to the group instead of directly to the base.
+    void fixDoubleScripts() {
+        for (;;) {
+            struct Script { size_t baseStart, scriptPos, argEnd; char kind; };
+            std::vector<Script> ss;
+
+            int depth = 0;
+            for (size_t i = 0; i < result_.size(); ++i) {
+                char c = result_[i];
+                if      (c == '{') { ++depth; continue; }
+                else if (c == '}') { if (depth > 0) --depth; continue; }
+                if (depth != 0 || (c != '^' && c != '_')) continue;
+
+                Script s;
+                s.scriptPos = i;
+                s.kind      = c;
+                s.baseStart = scanAtomBackward(result_, i);
+                s.argEnd    = skipAtomForward(result_, i + 1);
+                ss.push_back(s);
+            }
+
+            bool fixed = false;
+            for (size_t k = 1; k < ss.size() && !fixed; ++k) {
+                // Only a double-script error when the SAME operator repeats
+                // with no base in between (^A^B or _A_B).
+                // Mixed _A^B or ^A_B is valid LaTeX (sub + super on same atom).
+                if (ss[k].kind == ss[k-1].kind &&
+                    ss[k].scriptPos == ss[k-1].argEnd) {
+                    std::string out;
+                    out.reserve(result_.size() + 2);
+                    out.append(result_, 0, ss[k-1].baseStart);
+                    out += '{';
+                    out.append(result_, ss[k-1].baseStart,
+                               ss[k].scriptPos - ss[k-1].baseStart);
+                    out += '}';
+                    out.append(result_, ss[k].scriptPos, std::string::npos);
+                    result_ = std::move(out);
+                    fixed = true;
+                }
+            }
+            if (!fixed) break;
+        }
     }
 };
 

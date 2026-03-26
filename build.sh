@@ -83,8 +83,12 @@ const cases = [
   ['RowBox[{"x","+","y"}]',                  'x+y'],
   ['UnderoverscriptBox["\\\\[Sum]",RowBox[{"n","=","1"}],"\\\\[Infinity]"]',
                                              '\\sum _{n=1}^{\\infty }'],
-  ['"\\\\[Alpha]"',                          '\\alpha '],
-  ['"\\\\[Infinity]"',                       '\\infty '],
+  ['"\\\\[Alpha]"',                          '\\alpha'],
+  ['"\\\\[Infinity]"',                       '\\infty'],
+  // Post-processing / double-script fixes
+  ['SuperscriptBox[SuperscriptBox["f","1"],"2"]',          '{f^1}^2'],
+  ['SubscriptBox[SubscriptBox["x","i"],"j"]',              '{x_i}_j'],
+  ['SubsuperscriptBox[SuperscriptBox["f","a"],"i","n"]',   '{f^a}_i^n'],
 ];
 
 let passed = 0, failed = 0;
