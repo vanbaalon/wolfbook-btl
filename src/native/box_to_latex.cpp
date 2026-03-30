@@ -363,6 +363,9 @@ private:
                 auto mappedInner = wlCharToLatex(inner);
                 if (mappedInner.data() != nullptr) {
                     result_ += mappedInner;
+                    // Guard space: prevent command merging with next sibling
+                    if (!mappedInner.empty() && std::isalpha(static_cast<unsigned char>(mappedInner.back())))
+                        result_ += ' ';
                 } else {
                     result_ += "\\text{";
                     for (char c : inner) {
@@ -408,12 +411,14 @@ private:
                         auto m = wlCharToLatex(tok);
                         if (m.data() != nullptr) {
                             result_ += m;
-                            // If the command ends with a letter and the next
-                            // char is also a letter, insert a space so the
-                            // control word doesn't merge with following text.
+                            // If the command ends with a letter, insert a
+                            // guard space when the next char in this string
+                            // is also a letter OR when we're at the end of
+                            // the string (the next RowBox sibling may start
+                            // with a letter, e.g. \intop + f → \intop f).
                             if (!m.empty() && std::isalpha(static_cast<unsigned char>(m.back()))
-                                && end + 1 < stripped.size()
-                                && std::isalpha(static_cast<unsigned char>(stripped[end + 1])))
+                                && (end + 1 >= stripped.size()
+                                    || std::isalpha(static_cast<unsigned char>(stripped[end + 1]))))
                                 result_ += ' ';
                         } else {
                             result_ += tok; // unknown named char — emit verbatim
@@ -1034,6 +1039,16 @@ private:
                 continue; // ignore other bare symbols (e.g. StripOnInput)
             }
 
+            // Named WL style strings: "TI" = TraditionalForm Italic,
+            // "TR" = TraditionalForm Roman.  These appear as positional
+            // string arguments in boxes from Information[], Usage text, etc.
+            if (opt.isString()) {
+                std::string_view sv = pr_.str(opt);
+                if (sv == "TI") italic = true;
+                // "TR" is the default (roman) for multi-letter tokens — no flag needed
+                continue;
+            }
+
             // Bare integer or real (font size like 20) — ignore
             if (opt.kind == NodeKind::Integer || opt.kind == NodeKind::Real) continue;
 
@@ -1063,6 +1078,20 @@ private:
 
         // ShowContents -> False: suppress the entire cell
         if (!showContents) return;
+
+        // When a text-styling flag is active and the body was a plain
+        // multi-letter string that kMathOps mapped to an operator command
+        // (e.g. "min" → \min), override with the raw text so the font
+        // wrapper produces correct output (\mathit{min} not \mathit{\min}).
+        if (italic || bold) {
+            const Node& bodyNode = pr_.node(pr_.children[a]);
+            if (bodyNode.isString()) {
+                std::string_view raw = pr_.str(bodyNode);
+                if (classifyToken(raw) == TokenClass::MultiLetter) {
+                    inner = std::string(raw);
+                }
+            }
+        }
 
         // Apply: colour first (innermost), then underline, then italic, then bold.
         if (!colorHex.empty()) {
