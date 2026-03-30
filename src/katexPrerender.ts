@@ -19,8 +19,7 @@ import katex from 'katex';
 // strict: false  — required for `\textcolor{#rrggbb}{…}`
 // throwOnError: false — degrade gracefully; never crash the host
 // ----------------------------------------------------------
-const BASE_OPTIONS: katex.KatexOptions = {
-    throwOnError: false,
+const BASE_OPTIONS: katex.KatexOptions = {    output: 'html',   // suppress katex-mathml layer; keep only the visual HTML    throwOnError: false,
     errorColor: '#cc0000',
     trust: false,
     strict: false,     // required for \textcolor and non-standard commands

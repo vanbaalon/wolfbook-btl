@@ -5,3 +5,5 @@ boxes," latex"
 "RowBox[{RowBox[{""1.`"", "" ""}], ""+"", RowBox[{""2.4`"", "" "", ""I""}]}]","1.\, +2.4 i"
 "InterpretationBox[FractionBox[""1"",""3""], 1/3]",\frac{1}{3}
 "InterpretationBox[RowBox[{""x"", ""-"", FractionBox[SuperscriptBox[""x"", ""3""], ""6""], ""+"", FractionBox[SuperscriptBox[""x"", ""5""], ""120""], ""-"", FractionBox[SuperscriptBox[""x"", ""7""], ""5040""], ""+"", FractionBox[SuperscriptBox[""x"", ""9""], ""362880""], ""+"", InterpretationBox[RowBox[{""O"", ""("", SuperscriptBox[""x"", ""11""], "")""}], SeriesData[x, 0, {}, 1, 11, 1], Editable -> False]}], SeriesData[x, 0, {1, 0, -1/6, 0, 1/120, 0, -1/5040, 0, 1/362880}, 1, 11, 1], Editable -> False]",x-\frac{x^3}{6}+\frac{x^5}{120}-\frac{x^7}{5040}+\frac{x^9}{362880}+O\left(x^{11}\right)
+"RowBox[{""ab"", "" "", ""cd""}]","\mathrm{ab}\, \mathrm{cd}"
+"RowBox[{""a"", "" "", ""c""}]","a\, c"

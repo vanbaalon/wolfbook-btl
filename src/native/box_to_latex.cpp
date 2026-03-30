@@ -193,10 +193,15 @@ private:
             if (!result_.empty()) {
                 size_t j = result_.size();
                 while (j > 0 && std::isalpha(static_cast<unsigned char>(result_[j-1]))) --j;
-                result_ += (j > 0 && j < result_.size() && result_[j-1] == '\\')
-                           ? "  " : " ";
+                if (j > 0 && j < result_.size() && result_[j-1] == '\\') {
+                    result_ += "  ";
+                } else {
+                    // For RowBox[{"ab", " ", "cd"}], ensure a visual gap.
+                    // KaTeX ignores single spaces between \mathrm{} blocks.
+                    result_ += "\\,";
+                }
             } else {
-                result_ += ' ';
+                result_ += "\\,";
             }
             return;
         }

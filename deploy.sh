@@ -13,7 +13,23 @@ BUMP="${1:-patch}"
 REPO="vanbaalon/wolfbook-btl"
 WAIT_SECONDS=400   # 6-7 min ceiling; polls every 15 s
 
-# ── 1. bump version ──────────────────────────────────────────────────────────
+# ── 1. sync & pull package.json ───────────────────────────────────────────────
+# Stash any pre-existing changes to ensure pull/rebase success
+STASHED=0
+if [[ $(git status --porcelain) ]]; then
+  echo "Stashing local changes..."
+  git stash --message "deploy-stash"
+  STASHED=1
+fi
+
+echo "Syncing with remote..."
+git pull --rebase || { 
+  echo "ERROR: git pull failed. Resolve conflicts before re-running."
+  [[ $STASHED -eq 1 ]] && git stash pop
+  exit 1 
+}
+
+# ── 2. bump version ──────────────────────────────────────────────────────────
 OLD_VER=$(node -p "require('./package.json').version")
 
 bump_version() {
@@ -29,7 +45,7 @@ bump_version() {
 
 NEW_VER=$(bump_version "$OLD_VER" "$BUMP")
 
-# Update package.json in-place (no npm version, avoids git tag)
+# Update package.json in-place
 node -e "
 const fs = require('fs');
 const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
@@ -39,15 +55,16 @@ fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
 
 echo "Version: $OLD_VER → $NEW_VER"
 
-# ── 2. sync & commit & push ──────────────────────────────────────────────────
-# Stash any pre-existing changes to ensure rebase success
-git stash --message "deploy-stash"
-echo "Syncing with remote..."
-git pull --rebase || { echo "ERROR: git pull failed. Resolve conflicts before re-running."; git stash pop; exit 1; }
-git stash pop || true # apply previously stashed changes if any
+# ── 3. commit & push ────────────────────────────────────────────────────────
+# Restore stashed changes first so they are included in the same commit.
+if [[ $STASHED -eq 1 ]]; then
+  echo "Restoring stashed changes..."
+  git stash pop || { echo "ERROR: Stash pop had conflicts. Resolve manually, then push."; exit 1; }
+fi
 
-git add package.json
+git add -A
 git commit -m "chore: bump version to $NEW_VER"
+
 git push || { echo "ERROR: git push failed. Another user may have pushed; try pulling again."; exit 1; }
 echo "Pushed to GitHub."
 

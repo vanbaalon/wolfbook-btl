@@ -37,7 +37,7 @@ t('no-space multi-letter in \\mathrm{}',
 
 t('RowBox with space tokens',
   'RowBox[{"a"," ","b"," ","c"}]',
-  'a b c');
+  'a\\,b\\,c');
 
 // ---- StyleBox "TI" (TraditionalForm Italic) ----
 t('StyleBox min TI -> mathit',
@@ -68,7 +68,7 @@ t('x_{max} with TI style',
 // ---- Integral guard space ----
 t('integral f dx - no merge',
   'RowBox[{"\\[Integral]",RowBox[{"f"," ","d","","x"}]}]',
-  '\\intop f dx');
+  '\\intop f\\,dx');
 
 // ---- SubsuperscriptBox with TI-styled subscripts ----
 t('definite integral bounds',

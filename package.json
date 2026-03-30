@@ -1,6 +1,6 @@
 {
   "name": "wolfbook",
-  "version": "0.2.24",
+  "version": "0.2.25",
   "description": "Mathematica notebook functionality inside VSCode — fast box→LaTeX renderer",
   "main": "out/extension.js",
   "license": "MIT",
