@@ -603,6 +603,7 @@ private:
         else if (head == "MouseAppearanceTag")  { /* suppress */ }
         else if (head == "GraphicsBox")         result_ += "[graphics]";
         else if (head == "RGBColor")            { /* colour node — handled by StyleBox */ }
+        else if (head == "InformationData")     translateInformationData(n);
         else                                    translateUnknownExpr(head, argStart, argCount);
     }
 
@@ -1375,11 +1376,70 @@ private:
     }
 
     // ---- InformationData[<|"FullName"->…, "Usage"->…, …|>, False] ----
-    // Renders the symbol name and usage text extracted from the parsed Rule children.
+    // Renders the symbol name, usage text, attributes and options extracted from
+    // the parsed Rule children.
     // (The <|…|> association is partially parsed by the WL parser — Rule nodes
-    //  whose values are plain strings or symbols survive; nested associations don't.)
+    //  whose values are plain strings/symbols/lists survive; nested associations
+    //  don't, so "Documentation"'s local key is lost, but "Web" leaks through.)
+
+    // Helper: emit a single \text{…} atom with LaTeX special-char escaping.
+    void infoTextAtom(std::string_view sv) {
+        result_ += "\\text{";
+        for (char c : sv) {
+            switch (c) {
+                case '"':  break;
+                case '#':  result_ += "\\#"; break;
+                case '%':  result_ += "\\%"; break;
+                case '&':  result_ += "\\&"; break;
+                case '_':  result_ += "\\_"; break;
+                case '{':  result_ += "\\{"; break;
+                case '}':  result_ += "\\}"; break;
+                case '$':  result_ += "\\$"; break;
+                case '\\': result_ += "\\textbackslash{}"; break;
+                default:   result_ += c;
+            }
+        }
+        result_ += "}";
+    }
+
+    // Render Attributes list: {Protected, ReadProtected, …}
+    void renderInfoAttributes(uint32_t listIdx) {
+        const Node& list = pr_.node(listIdx);
+        result_ += "\\text{Attributes: }\\{";
+        for (uint32_t i = 0; i < list.childrenCount; ++i) {
+            if (i > 0) result_ += "\\text{, }";
+            infoTextAtom(pr_.str(pr_.node(pr_.children[list.childrenStart + i])));
+        }
+        result_ += "\\}";
+    }
+
+    // Render Options list: {Opt1 -> val1, Opt2 :> val2, …}
+    void renderInfoOptions(uint32_t listIdx) {
+        const Node& list = pr_.node(listIdx);
+        result_ += "\\text{Options: }";
+        bool first = true;
+        for (uint32_t i = 0; i < list.childrenCount; ++i) {
+            const Node& opt = pr_.node(pr_.children[list.childrenStart + i]);
+            if ((opt.kind != NodeKind::Rule && opt.kind != NodeKind::RuleDelayed)
+                || opt.childrenCount < 2) continue;
+            if (!first) result_ += "\\text{, }";
+            first = false;
+            const Node& lhs = pr_.node(pr_.children[opt.childrenStart]);
+            const Node& rhs = pr_.node(pr_.children[opt.childrenStart + 1]);
+            infoTextAtom(pr_.str(lhs));
+            result_ += (opt.kind == NodeKind::RuleDelayed) ? "\\mapsto " : "\\to ";
+            if (rhs.isSymbol() || rhs.isString()) {
+                infoTextAtom(pr_.str(rhs));
+            } else {
+                translate(pr_.children[opt.childrenStart + 1]);
+            }
+        }
+    }
+
     void translateInformationData(const Node& infoNode) {
         std::string_view fullName, usageStr;
+        uint32_t attrsIdx = UINT32_MAX;
+        uint32_t optsIdx  = UINT32_MAX;
         for (uint32_t i = 1; i < infoNode.childrenCount; ++i) {
             const Node& ch = pr_.node(pr_.children[infoNode.childrenStart + i]);
             if (ch.kind != NodeKind::Rule && ch.kind != NodeKind::RuleDelayed) continue;
@@ -1388,8 +1448,10 @@ private:
             const Node& v = pr_.node(pr_.children[ch.childrenStart + 1]);
             if (!k.isString()) continue;
             std::string_view ks = pr_.str(k);
-            if (ks == "FullName" && v.isString()) fullName = pr_.str(v);
-            if (ks == "Usage"    && v.isString()) usageStr = pr_.str(v);
+            if (ks == "FullName"   && v.isString()) fullName = pr_.str(v);
+            if (ks == "Usage"      && v.isString()) usageStr = pr_.str(v);
+            if (ks == "Attributes" && v.isList())   attrsIdx = pr_.children[ch.childrenStart + 1];
+            if (ks == "Options"    && v.isList())   optsIdx  = pr_.children[ch.childrenStart + 1];
         }
 
         // Derive short name: strip WL context prefix ("System`Integrate" → "Integrate")
@@ -1413,6 +1475,14 @@ private:
         if (!usageStr.empty()) {
             result_ += "\\\\ ";
             renderInfoUsageString(usageStr);
+        }
+        if (attrsIdx != UINT32_MAX) {
+            result_ += "\\\\ ";
+            renderInfoAttributes(attrsIdx);
+        }
+        if (optsIdx != UINT32_MAX) {
+            result_ += "\\\\ ";
+            renderInfoOptions(optsIdx);
         }
         result_ += "\\end{array}";
     }
