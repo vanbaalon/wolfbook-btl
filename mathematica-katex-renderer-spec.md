@@ -14,6 +14,9 @@ Mathematica expression
    LaTeX string
         ↓  (transmitted via WSTP/JSON to extension host)
         │
+        │  [optional] lineBreakLatex(latex, {pageWidth})
+        │       wraps long expressions in \begin{aligned}...\end{aligned}
+        │
         ├── Mode A: "latex"
         │       ↓  postMessage to Webview
         │   LaTeX string in Webview
@@ -39,8 +42,9 @@ Mathematica expression
 
 | Layer | Responsibility |
 |-------|---------------|
-| **Wolfram Language (kernel)** | Box → LaTeX translation. Always produces a LaTeX string. Knows nothing about rendering. |
-| **Extension host (Node.js TypeScript)** | Decides output mode. In Mode B, calls `katex.renderToString()` synchronously and sends HTML. In Mode A, forwards the LaTeX string. |
+| **Wolfram Language (kernel)** | Box → LaTeX translation. Always produces a single-line LaTeX string. Knows nothing about rendering. |
+| **C++ native addon** | Fast re-implementation of the WL translator. Also exposes `lineBreakLatex()` for optional post-processing. |
+| **Extension host (Node.js TypeScript)** | Optionally applies line-breaking (`lineBreakLatex`). Decides output mode. In Mode B, calls `katex.renderToString()` synchronously and sends HTML. In Mode A, forwards the LaTeX string. |
 | **Webview** | In Mode A, calls `katex.render()` on the received LaTeX string. In Mode B, sets `container.innerHTML` directly. |
 
 The Wolfram Language side is identical in both modes — it always outputs a LaTeX string. The mode decision lives entirely in the extension host, which means it can be changed at runtime (e.g. per user setting, or automatically switched based on expression size) without touching WL code.

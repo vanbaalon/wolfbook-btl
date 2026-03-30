@@ -59,7 +59,7 @@ echo "Version: $OLD_VER → $NEW_VER"
 # Restore stashed changes first so they are included in the same commit.
 if [[ $STASHED -eq 1 ]]; then
   echo "Restoring stashed changes..."
-  git stash pop || { echo "ERROR: Stash pop had conflicts. Resolve manually, then push."; exit 1; }
+  git stash pop -q || { echo "ERROR: Stash pop had conflicts. Resolve manually, then push."; exit 1; }
 fi
 
 git add -A
@@ -121,7 +121,7 @@ echo "Waiting 30s for collect job to commit prebuilds..."
 sleep 30
 
 # ── 4. pull prebuilds ─────────────────────────────────────────────────────────
-git pull --rebase
+git pull --rebase --autostash
 echo ""
 echo "Done! Prebuilds in prebuilds/:"
 ls -lh prebuilds/

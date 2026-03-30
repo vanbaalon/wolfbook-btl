@@ -23,11 +23,13 @@ Mathematica kernel
   │  C++ native addon  (build/Release/wolfbook_btl.node) │
   │                                                     │
   │  WLParser           →  flat arena AST               │
-  │  BoxTranslator      →  LaTeX string                 │
+  │  BoxTranslator      →  single-line LaTeX string     │
+  │  LineBreaker        →  multi-line LaTeX (optional)  │
   │  special_chars      →  O(1) named-char lookup       │
   └─────────────────────────────────────────────────────┘
         │
         │  LaTeX string  e.g. \frac{1}{2}
+        │  or \begin{aligned}…\end{aligned} (if line-broken)
         ▼
   outputRenderer.ts
   (mode decision)
@@ -70,7 +72,8 @@ The production fast path. Compiled to a Node.js native module via `node-gyp`. Al
 | `src/native/wl_parser.h/.cpp` | Recursive-descent parser for WL InputForm strings. Produces a flat arena-allocated AST (no per-node heap allocation). Handles strings (including `\[Named]` escapes), symbols, numbers, compound expressions `Head[…]`, lists `{…}`, and rules `lhs -> rhs`. |
 | `src/native/special_chars.h/.cpp` | `wlCharToLatex(token)` via `unordered_map` (O(1) avg). `isLargeOperator(latex)` via `unordered_set`. Covers all Greek, operators, arrows, blackboard-bold, spacing/invisible characters. |
 | `src/native/box_to_latex.h/.cpp` | `BoxTranslator` walks the AST by index (no virtual calls). Handles all box heads. `StyleBox` applies colour innermost → bold outermost. Delimiter detection in `RowBox` selects matrix environments. |
-| `src/native/addon.cpp` | N-API wrapper. Exports a single JS function: `boxToLatex(str: string): BoxToLatexResult`. Zero DOM dependencies. |
+| `src/native/line_breaker.h/.cpp` | Post-processing line-break layer. Takes a single-line LaTeX string and wraps it in `\begin{aligned}…\end{aligned}` when it exceeds a target `pageWidth`. Uses symbol classification (relations, binary operators, delimiters), delimiter-depth tracking, and a simplified Knuth-Plass DP to find optimal breakpoints. Inspired by the algorithm in the `breqn` LaTeX package (see [Credits](#credits)). |
+| `src/native/addon.cpp` | N-API wrapper. Exports two JS functions: `boxToLatex(str)` and `lineBreakLatex(latex, opts?)`. Zero DOM dependencies. |
 
 **Performance characteristics:**
 - Parse: single-pass, O(n) time, O(n) space in a flat arena
@@ -84,7 +87,7 @@ Runs in the **Node.js extension host process**. No DOM APIs.
 
 | File | Purpose |
 |------|---------|
-| `src/wolfbook_btl.d.ts` | TypeScript declarations for the C++ addon. |
+| `src/wolfbook_btl.d.ts` | TypeScript declarations for the C++ addon (`boxToLatex` and `lineBreakLatex`). |
 | `src/katexPrerender.ts` | **Mode B**: calls `katex.renderToString()` synchronously and returns a self-contained HTML+SVG string. HTML-escape fallback on KaTeX error. `strict: false` enables `\textcolor`. |
 | `src/outputRenderer.ts` | **Mode dispatcher**: `prepareOutput(latex, displayMode, config)` → `{ mode, payload }`. Auto-upgrades to pre-rendered when `latex.length > prerenderedThreshold` (default 2 000 chars). Zero VSCode API imports — fully unit-testable in plain Node.js. |
 
@@ -147,6 +150,40 @@ interface BoxToLatexResult {
   error: string | null;  // null on success; diagnostic message on failure
 }
 ```
+
+### `lineBreakLatex` — optional line-breaking pass
+
+```ts
+import * as btl from './build/Release/wolfbook_btl.node';
+
+const { latex } = btl.boxToLatex(rawBoxes);
+
+// Wrap long expressions in \begin{aligned}...\end{aligned}.
+// No-op when the expression fits within pageWidth, or when the
+// input is already a multi-line environment.
+const broken = btl.lineBreakLatex(latex, {
+  pageWidth:     60,   // target width in em (default: 80)
+  indentStep:     2,   // continuation indent in em (default: 2)
+  compact:     false,  // true: pack lines; false: prefer relation-aligned breaks
+  maxDelimDepth:  2,   // max nesting depth for breakpoints (default: 2)
+});
+
+katex.render(broken, container, { displayMode: true });
+```
+
+**Break priority** (lower penalty = preferred):
+
+| Symbol class | Examples | Penalty |
+|---|---|---|
+| Relation | `=`, `<`, `\leq`, `\to`, `:=` | −100 (strongest — always try here first) |
+| Comma | `,` | +30 |
+| Binary op | `+`, `−`, `\times`, `\cup` | +50 |
+| Delimiter | `(`, `)`, `[`, `]` | +200 |
+| Inside delimiters | any of the above at depth *d* | base + 500 × *d* |
+
+Breaks deeper than `maxDelimDepth` are forbidden entirely.
+
+---
 
 ### Checking for errors
 
@@ -248,8 +285,9 @@ The tester calls the C++ addon directly via a `/api/translate` REST endpoint. It
 │   ├── katexPrerender.ts        Mode B: katex.renderToString() in ext host
 │   ├── outputRenderer.ts        mode dispatcher (no VSCode API imports)
 │   └── native/                  C++ native addon
-│       ├── addon.cpp            N-API entry point
+│       ├── addon.cpp            N-API entry point (boxToLatex + lineBreakLatex)
 │       ├── box_to_latex.h/.cpp  AST → LaTeX translator
+│       ├── line_breaker.h/.cpp  post-processing line-break layer
 │       ├── wl_parser.h/.cpp     WL InputForm string parser
 │       └── special_chars.h/.cpp named-char lookup table
 │
@@ -273,3 +311,32 @@ The tester calls the C++ addon directly via a `/api/translate` REST endpoint. It
 | `typescript` | `^5.4` | Build only | TS compilation |
 
 KaTeX **must be bundled** (not CDN-loaded) when running inside a VSCode Webview due to the extension host Content Security Policy. The tester page uses the CDN for convenience.
+
+---
+
+## Credits
+
+### breqn — Automatic line breaking for displayed math
+
+The line-breaking algorithm in `src/native/line_breaker.cpp` is inspired by the **`breqn`** LaTeX package. The core ideas adopted here are:
+
+- **Symbol reclassification**: math symbols assigned to semantic break-classes (relation, binary operator, open/close delimiter) to determine preferred break positions — mirroring `breqn`'s use of `flexisym`.
+- **Penalty model**: negative penalty at relation symbols (strongly preferred break), positive penalty at binary operators (fallback), and increasing penalty at deeper delimiter nesting — following `breqn`'s `\prerelpenalty` / `\prebinoppenalty` conventions.
+- **Optimal breaking via dynamic programming**: a simplified version of the Knuth-Plass paragraph-breaking algorithm (box/glue/penalty model), adapted for short math expressions where O(n²) DP is sufficient.
+- **Layout shapes**: the distinction between *straight ladder* (LHS < 40% of line width, relation-aligned continuation) and *staggered* (`\quad`-indented continuation) layouts is drawn from `breqn`'s parshape taxonomy.
+
+**Original authors of `breqn`:**
+- **Michael J. Downes** — original design and implementation (1997–2004)
+- **Morten Høgholm** — major rewrite and maintenance (LaTeX3 Project, 2006–2012)
+
+The `breqn` package is part of the LaTeX3 Project and is distributed under the LaTeX Project Public License (LPPL). Source: https://ctan.org/pkg/breqn
+
+### Knuth-Plass line-breaking algorithm
+
+The underlying DP model is the **Knuth-Plass optimal paragraph-breaking algorithm**, originally described in:
+
+> D. E. Knuth and M. F. Plass, "Breaking Paragraphs into Lines", *Software — Practice and Experience*, 11(11):1119–1184, 1981.
+
+### KaTeX
+
+Math rendering is provided by **KaTeX**, developed by Khan Academy. https://katex.org

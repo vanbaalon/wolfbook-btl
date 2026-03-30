@@ -11,6 +11,7 @@
 
 #include <napi.h>
 #include "box_to_latex.h"
+#include "line_breaker.h"
 
 namespace {
 
@@ -49,12 +50,48 @@ Napi::Value JsBoxToLatex(const Napi::CallbackInfo& info) {
 }
 
 // ----------------------------------------------------------
+// JS binding:
+//   lineBreakLatex(latexString: string, options?: { pageWidth, indentStep, compact, maxDelimDepth })
+//     => string
+// ----------------------------------------------------------
+Napi::Value JsLineBreakLatex(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+
+    if (info.Length() < 1 || !info[0].IsString()) {
+        Napi::TypeError::New(env, "lineBreakLatex expects a string argument")
+            .ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    std::string latex = info[0].As<Napi::String>().Utf8Value();
+
+    wolfbook::LineBreakOptions opts;
+    if (info.Length() >= 2 && info[1].IsObject()) {
+        Napi::Object jsOpts = info[1].As<Napi::Object>();
+        if (jsOpts.Has("pageWidth"))
+            opts.pageWidth = jsOpts.Get("pageWidth").As<Napi::Number>().DoubleValue();
+        if (jsOpts.Has("indentStep"))
+            opts.indentStep = jsOpts.Get("indentStep").As<Napi::Number>().DoubleValue();
+        if (jsOpts.Has("compact"))
+            opts.compact = jsOpts.Get("compact").As<Napi::Boolean>().Value();
+        if (jsOpts.Has("maxDelimDepth"))
+            opts.maxDelimDepth = jsOpts.Get("maxDelimDepth").As<Napi::Number>().Int32Value();
+    }
+
+    std::string result = wolfbook::lineBreakLatex(latex, opts);
+    return Napi::String::New(env, result);
+}
+
+// ----------------------------------------------------------
 // Module initialiser
 // ----------------------------------------------------------
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set(
         Napi::String::New(env, "boxToLatex"),
         Napi::Function::New(env, JsBoxToLatex, "boxToLatex"));
+    exports.Set(
+        Napi::String::New(env, "lineBreakLatex"),
+        Napi::Function::New(env, JsLineBreakLatex, "lineBreakLatex"));
     return exports;
 }
 

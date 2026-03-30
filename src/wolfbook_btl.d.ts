@@ -50,3 +50,29 @@ export interface BoxToLatexResult {
  * @returns `{ latex, error }` — `error` is `null` on success
  */
 export declare function boxToLatex(wlBoxString: string): BoxToLatexResult;
+
+/** Options for the line-breaking post-processor. */
+export interface LineBreakOptions {
+  /** Target width in approximate em units (default: 80). */
+  pageWidth?: number;
+  /** Continuation line indent in em (default: 2). */
+  indentStep?: number;
+  /** Prefer fewer lines over relation-aligned breaks (default: false). */
+  compact?: boolean;
+  /** Max delimiter nesting depth for breaks (default: 2). */
+  maxDelimDepth?: number;
+}
+
+/**
+ * Apply line-breaking to a single-line LaTeX string.
+ *
+ * If the expression fits within `pageWidth` or no suitable breakpoints
+ * are found, returns the input unchanged. Otherwise wraps the output
+ * in a `\begin{aligned}...\end{aligned}` environment with `\\` line
+ * breaks at optimal positions (relations first, then binary operators).
+ *
+ * @param latex   Single-line LaTeX string (as produced by `boxToLatex`)
+ * @param options Line-break configuration
+ * @returns       Possibly multi-line LaTeX string
+ */
+export declare function lineBreakLatex(latex: string, options?: LineBreakOptions): string;

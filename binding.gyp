@@ -6,6 +6,7 @@
       "sources": [
         "src/native/addon.cpp",
         "src/native/box_to_latex.cpp",
+        "src/native/line_breaker.cpp",
         "src/native/wl_parser.cpp",
         "src/native/special_chars.cpp"
       ],
