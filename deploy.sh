@@ -39,10 +39,13 @@ fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
 
 echo "Version: $OLD_VER → $NEW_VER"
 
-# ── 2. commit & push ─────────────────────────────────────────────────────────
+# ── 2. sync & commit & push ──────────────────────────────────────────────────
+echo "Syncing with remote..."
+git pull --rebase || { echo "ERROR: git pull failed. Resolve conflicts before re-running."; exit 1; }
+
 git add package.json
 git commit -m "chore: bump version to $NEW_VER"
-git push
+git push || { echo "ERROR: git push failed. Another user may have pushed; try pulling again."; exit 1; }
 echo "Pushed to GitHub."
 
 # ── 3. wait for CI ───────────────────────────────────────────────────────────
