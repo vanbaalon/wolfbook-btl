@@ -40,8 +40,11 @@ fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
 echo "Version: $OLD_VER → $NEW_VER"
 
 # ── 2. sync & commit & push ──────────────────────────────────────────────────
+# Stash any pre-existing changes to ensure rebase success
+git stash --message "deploy-stash"
 echo "Syncing with remote..."
-git pull --rebase || { echo "ERROR: git pull failed. Resolve conflicts before re-running."; exit 1; }
+git pull --rebase || { echo "ERROR: git pull failed. Resolve conflicts before re-running."; git stash pop; exit 1; }
+git stash pop || true # apply previously stashed changes if any
 
 git add package.json
 git commit -m "chore: bump version to $NEW_VER"
