@@ -81,6 +81,53 @@ const routes = {
     });
     res.end();
   },
+
+  // POST /api/linebreak
+  // {
+  //   latex,
+  //   pageWidth, pageWidthPx, baseFontSizePx,
+  //   indentStep, compact, maxDelimDepth, maxIterations
+  // }
+  //  → { latex: brokenLatex, error: null|string }
+  'POST /api/linebreak': (req, res) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      let broken = '', error = null;
+      try {
+        const parsed = JSON.parse(body);
+        if (typeof parsed.latex !== 'string') throw new Error('"latex" must be a string');
+        const opts = {
+          pageWidth:  typeof parsed.pageWidth  === 'number' ? parsed.pageWidth  : 40,
+          pageWidthPx: typeof parsed.pageWidthPx === 'number' ? parsed.pageWidthPx : 0,
+          baseFontSizePx: typeof parsed.baseFontSizePx === 'number' ? parsed.baseFontSizePx : 16,
+          indentStep: typeof parsed.indentStep === 'number' ? parsed.indentStep : 2,
+          compact:    parsed.compact === true,
+          maxDelimDepth: typeof parsed.maxDelimDepth === 'number' ? parsed.maxDelimDepth : 2,
+          maxIterations: typeof parsed.maxIterations === 'number' ? parsed.maxIterations : 0,
+        };
+        console.log(`\n─── LINEBREAK  pw=${opts.pageWidth}  pwPx=${opts.pageWidthPx}  basePx=${opts.baseFontSizePx}  indent=${opts.indentStep}  depth=${opts.maxDelimDepth}  iter=${opts.maxIterations} ───`);
+        console.log(parsed.latex.substring(0, 140));
+        broken = ADDON.lineBreakLatex(parsed.latex, opts);
+        console.log('─── RESULT ───\n' + broken.substring(0, 200));
+        console.log('─────────────');
+      } catch (err) {
+        error = String(err.message ?? err);
+      }
+      const payload = JSON.stringify({ latex: broken, error });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(payload);
+    });
+  },
+
+  'OPTIONS /api/linebreak': (req, res) => {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    });
+    res.end();
+  },
 };
 
 // ----------------------------------------------------------

@@ -113,18 +113,41 @@ static bool isCloseDelim(std::string_view cmd) {
     return false;
 }
 
-// Commands where we must NOT break inside their braced arguments
-static bool isAtomicCmd(std::string_view cmd) {
-    static const std::string_view atomics[] = {
-        "\\frac", "\\dfrac", "\\tfrac", "\\binom",
-        "\\sqrt", "\\text", "\\mathrm", "\\mathit", "\\mathbf",
-        "\\mathbb", "\\mathcal", "\\mathfrak", "\\mathsf",
-        "\\operatorname", "\\hat", "\\bar", "\\vec", "\\tilde",
-        "\\dot", "\\ddot", "\\overline", "\\underline",
-        "\\overbrace", "\\underbrace", "\\overset", "\\underset",
-        "\\stackrel", "\\color", "\\textcolor",
+// Zero-width rendering commands (no glyph, no space)
+static bool isStyleCmd(std::string_view cmd) {
+    static const std::string_view styles[] = {
+        "\\color", "\\textcolor", "\\colorbox",
+        "\\displaystyle", "\\textstyle", "\\scriptstyle", "\\scriptscriptstyle",
+        "\\phantom", "\\hphantom", "\\vphantom",
+        "\\label", "\\tag", "\\notag", "\\nonumber",
     };
-    for (auto& a : atomics) if (cmd == a) return true;
+    for (auto& s : styles) if (cmd == s) return true;
+    return false;
+}
+
+// Font/style-change commands: content retains normal width
+static bool isFontCmd(std::string_view cmd) {
+    static const std::string_view fonts[] = {
+        "\\mathbf", "\\mathit", "\\mathrm", "\\mathsf", "\\mathtt",
+        "\\mathcal", "\\mathbb", "\\mathfrak", "\\mathscr",
+        "\\boldsymbol", "\\bm",
+        "\\text", "\\textbf", "\\textit", "\\textrm", "\\textsf", "\\texttt",
+        "\\operatorname",
+    };
+    for (auto& f : fonts) if (cmd == f) return true;
+    return false;
+}
+
+// Structural commands: atomic, width from estimateStructuralWidth
+static bool isStructuralCmd(std::string_view cmd) {
+    static const std::string_view structs[] = {
+        "\\frac", "\\dfrac", "\\tfrac", "\\binom",
+        "\\sqrt",
+        "\\hat", "\\bar", "\\vec", "\\tilde", "\\dot", "\\ddot",
+        "\\overline", "\\underline", "\\overbrace", "\\underbrace",
+        "\\overset", "\\underset", "\\stackrel",
+    };
+    for (auto& s : structs) if (cmd == s) return true;
     return false;
 }
 
@@ -132,53 +155,167 @@ static bool isAtomicCmd(std::string_view cmd) {
 // Width estimation
 // ----------------------------------------------------------
 
-// Estimated width in "em" for a single LaTeX command
+// Math italic glyph widths for a-z
+static const double kMathItalicWidths[26] = {
+    0.53, 0.43, 0.43, 0.52, 0.44, 0.39, 0.50, 0.56, 0.31, 0.35,
+    0.52, 0.31, 0.84, 0.56, 0.50, 0.52, 0.48, 0.41, 0.42, 0.39,
+    0.54, 0.48, 0.70, 0.52, 0.47, 0.44
+};
+
+// Estimated width in "em" for a single LaTeX command (or character).
+// For relations/binops the surrounding math spacing is baked in.
 static double cmdWidth(std::string_view cmd) {
     if (cmd.empty()) return 0.0;
 
     // Single character
     if (cmd.size() == 1) {
         char c = cmd[0];
-        if (c >= '0' && c <= '9') return 0.5;
-        if (c >= 'a' && c <= 'z') return 0.5;
+        if (c >= '0' && c <= '9') return 0.50;
+        if (c >= 'a' && c <= 'z') return kMathItalicWidths[c - 'a'];
         if (c >= 'A' && c <= 'Z') return 0.65;
-        if (c == '+' || c == '-' || c == '=') return 0.7;
+        // Relations: glyph + 2×thickmuskip (≈0.56 em total spacing)
+        if (c == '=' || c == '<' || c == '>') return 0.78 + 0.56;
+        // Binops: glyph + 2×medmuskip (≈0.44 em total spacing)
+        if (c == '+') return 0.78 + 0.44;
+        if (c == '-') return 0.44 + 0.44;
         if (c == '(' || c == ')') return 0.35;
-        if (c == '[' || c == ']') return 0.3;
+        if (c == '[' || c == ']') return 0.30;
         if (c == ',') return 0.28;
         if (c == ' ') return 0.25;
-        return 0.5;
+        if (c == ';') return 0.35;
+        if (c == ':') return 0.30;
+        if (c == '|') return 0.28;
+        return 0.50;
     }
 
-    // Known wide symbols
-    if (cmd == "\\sum" || cmd == "\\prod") return 1.2;
-    if (cmd == "\\int" || cmd == "\\intop") return 1.0;
-    if (cmd == "\\infty") return 1.0;
-    if (cmd == "\\partial") return 0.6;
+    if (cmd[0] != '\\') return 0.50;
 
-    // Greek letters: ~0.6 em
-    if (cmd.size() > 1 && cmd[0] == '\\' &&
-        std::islower(static_cast<unsigned char>(cmd[1])))
-        return 0.6;
-
-    // Uppercase Greek / operator names
-    if (cmd.size() > 1 && cmd[0] == '\\' &&
-        std::isupper(static_cast<unsigned char>(cmd[1])))
-        return 0.8;
-
-    // \, \; \: \! thin/med/thick/neg space
-    if (cmd == "\\," || cmd == "\\:" || cmd == "\\;") return 0.17;
+    // Math spacing
+    if (cmd == "\\," || cmd == "\\:") return 0.17;
+    if (cmd == "\\;") return 0.22;
     if (cmd == "\\!") return -0.06;
-    if (cmd == "\\quad") return 1.0;
-    if (cmd == "\\qquad") return 2.0;
+    if (cmd == "\\quad") return 1.00;
+    if (cmd == "\\qquad") return 2.00;
 
-    // Default for unknown commands
-    return 0.7;
+    // Named operators with precise widths
+    if (cmd == "\\lim")  return 1.37;
+    if (cmd == "\\max")  return 1.67;
+    if (cmd == "\\min")  return 1.37;
+    if (cmd == "\\sup")  return 1.12;
+    if (cmd == "\\inf")  return 0.84;
+    if (cmd == "\\sin")  return 1.12;
+    if (cmd == "\\cos")  return 1.21;
+    if (cmd == "\\tan")  return 1.12;
+    if (cmd == "\\exp")  return 1.21;
+    if (cmd == "\\log")  return 1.12;
+    if (cmd == "\\ln")   return 0.84;
+    if (cmd == "\\det")  return 1.12;
+    if (cmd == "\\dim")  return 1.12;
+    if (cmd == "\\ker")  return 1.12;
+    if (cmd == "\\arg")  return 1.12;
+    if (cmd == "\\deg")  return 1.12;
+    if (cmd == "\\gcd")  return 1.21;
+    if (cmd == "\\Pr")   return 0.84;
+
+    // Big operators
+    if (cmd == "\\sum" || cmd == "\\prod") return 1.20;
+    if (cmd == "\\int" || cmd == "\\intop" || cmd == "\\oint") return 1.00;
+    if (cmd == "\\bigcup" || cmd == "\\bigcap") return 1.10;
+    if (cmd == "\\bigoplus" || cmd == "\\bigotimes") return 1.10;
+
+    // Common symbols
+    if (cmd == "\\infty")   return 1.00;
+    if (cmd == "\\partial") return 0.61;
+    if (cmd == "\\nabla")   return 0.71;
+    if (cmd == "\\forall")  return 0.80;
+    if (cmd == "\\exists")  return 0.70;
+    if (cmd == "\\emptyset" || cmd == "\\varnothing") return 0.70;
+    if (cmd == "\\cdot")    return 0.39 + 0.44;
+    if (cmd == "\\cdots" || cmd == "\\ldots") return 1.02;
+    if (cmd == "\\vdots")   return 0.28;
+    if (cmd == "\\ddots")   return 1.02;
+    if (cmd == "\\pm" || cmd == "\\mp")   return 0.78 + 0.44;
+    if (cmd == "\\times")   return 0.78 + 0.44;
+    if (cmd == "\\div")     return 0.78 + 0.44;
+    if (cmd == "\\circ")    return 0.44 + 0.44;
+    if (cmd == "\\bullet")  return 0.44 + 0.44;
+    if (cmd == "\\cap" || cmd == "\\cup") return 0.78 + 0.44;
+    if (cmd == "\\wedge" || cmd == "\\vee") return 0.78 + 0.44;
+    if (cmd == "\\oplus" || cmd == "\\otimes") return 0.78 + 0.44;
+
+    // Relations (glyph + 2×thickmuskip ≈ 0.56 em)
+    if (cmd == "\\leq" || cmd == "\\geq" || cmd == "\\neq") return 0.78 + 0.56;
+    if (cmd == "\\approx" || cmd == "\\sim" || cmd == "\\cong") return 0.78 + 0.56;
+    if (cmd == "\\equiv")   return 0.78 + 0.56;
+    if (cmd == "\\propto")  return 0.78 + 0.56;
+    if (cmd == "\\subset" || cmd == "\\supset") return 0.78 + 0.56;
+    if (cmd == "\\subseteq" || cmd == "\\supseteq") return 0.78 + 0.56;
+    if (cmd == "\\in" || cmd == "\\notin" || cmd == "\\ni") return 0.70 + 0.56;
+    if (cmd == "\\ll" || cmd == "\\gg") return 0.78 + 0.56;
+    if (cmd == "\\perp" || cmd == "\\parallel") return 0.78 + 0.56;
+
+    // Arrows (relations: glyph + 0.56 em spacing)
+    if (cmd == "\\rightarrow" || cmd == "\\to") return 1.00 + 0.56;
+    if (cmd == "\\leftarrow"  || cmd == "\\gets") return 1.00 + 0.56;
+    if (cmd == "\\Rightarrow" || cmd == "\\Leftarrow") return 1.11 + 0.56;
+    if (cmd == "\\leftrightarrow") return 1.56 + 0.56;
+    if (cmd == "\\Leftrightarrow") return 1.56 + 0.56;
+    if (cmd == "\\mapsto")      return 1.22 + 0.56;
+    if (cmd == "\\longrightarrow" || cmd == "\\longleftarrow") return 2.00 + 0.56;
+    if (cmd == "\\iff")         return 2.56 + 0.56;
+    if (cmd == "\\implies")     return 1.56 + 0.56;
+
+    // Delimiters
+    if (cmd == "\\{" || cmd == "\\}") return 0.37;
+    if (cmd == "\\langle" || cmd == "\\rangle") return 0.37;
+    if (cmd == "\\lvert"  || cmd == "\\rvert")  return 0.28;
+    if (cmd == "\\lVert"  || cmd == "\\rVert")  return 0.28;
+    if (cmd == "\\lfloor" || cmd == "\\rfloor") return 0.44;
+    if (cmd == "\\lceil"  || cmd == "\\rceil")  return 0.44;
+
+    // Lowercase Greek letters (per-symbol)
+    if (cmd == "\\alpha")   return 0.63;
+    if (cmd == "\\beta")    return 0.57;
+    if (cmd == "\\gamma")   return 0.57;
+    if (cmd == "\\delta")   return 0.56;
+    if (cmd == "\\epsilon" || cmd == "\\varepsilon") return 0.52;
+    if (cmd == "\\zeta")    return 0.52;
+    if (cmd == "\\eta")     return 0.56;
+    if (cmd == "\\theta"  || cmd == "\\vartheta")  return 0.55;
+    if (cmd == "\\iota")    return 0.30;
+    if (cmd == "\\kappa"  || cmd == "\\varkappa")  return 0.57;
+    if (cmd == "\\lambda")  return 0.63;
+    if (cmd == "\\mu")      return 0.70;
+    if (cmd == "\\nu")      return 0.52;
+    if (cmd == "\\xi")      return 0.52;
+    if (cmd == "\\pi" || cmd == "\\varpi") return 0.57;
+    if (cmd == "\\rho" || cmd == "\\varrho") return 0.50;
+    if (cmd == "\\sigma" || cmd == "\\varsigma") return 0.52;
+    if (cmd == "\\tau")     return 0.44;
+    if (cmd == "\\upsilon") return 0.56;
+    if (cmd == "\\phi" || cmd == "\\varphi") return 0.63;
+    if (cmd == "\\chi")     return 0.63;
+    if (cmd == "\\psi")     return 0.63;
+    if (cmd == "\\omega")   return 0.70;
+
+    // Uppercase Greek letters (per-symbol)
+    if (cmd == "\\Gamma")   return 0.63;
+    if (cmd == "\\Delta")   return 0.83;
+    if (cmd == "\\Theta")   return 0.83;
+    if (cmd == "\\Lambda")  return 0.83;
+    if (cmd == "\\Xi")      return 0.72;
+    if (cmd == "\\Pi")      return 0.83;
+    if (cmd == "\\Sigma")   return 0.83;
+    if (cmd == "\\Upsilon") return 0.83;
+    if (cmd == "\\Phi")     return 0.83;
+    if (cmd == "\\Psi")     return 0.83;
+    if (cmd == "\\Omega")   return 0.83;
+
+    // Fallback by case
+    if (std::islower(static_cast<unsigned char>(cmd[1]))) return 0.55;
+    if (std::isupper(static_cast<unsigned char>(cmd[1]))) return 0.73;
+    return 0.55;
 }
-
-// Width of a braced group {...}: sum of inner token widths
-// (Caller handles the recursion; we just need the overhead)
-static constexpr double kBraceOverhead = 0.0; // braces are invisible in math mode
 
 // ----------------------------------------------------------
 // Tokenizer — breaks LaTeX string into logical tokens
@@ -213,6 +350,59 @@ static size_t readCommand(std::string_view s, size_t pos) {
     return i;
 }
 
+static std::string_view trimSpaces(std::string_view s) {
+    while (!s.empty() && s.front() == ' ') s.remove_prefix(1);
+    while (!s.empty() && s.back() == ' ')  s.remove_suffix(1);
+    return s;
+}
+
+static bool readEnvironment(std::string_view s,
+                            size_t pos,
+                            std::string_view& envName,
+                            size_t& beginTagEnd,
+                            size_t& fullEnd)
+{
+    if (s.substr(pos, 7) != "\\begin{") return false;
+
+    size_t nameStart = pos + 7;
+    size_t nameEnd = s.find('}', nameStart);
+    if (nameEnd == std::string_view::npos) return false;
+
+    envName = s.substr(nameStart, nameEnd - nameStart);
+    beginTagEnd = nameEnd + 1;
+
+    std::string beginTag = "\\begin{" + std::string(envName) + "}";
+    std::string endTag   = "\\end{"   + std::string(envName) + "}";
+
+    size_t searchPos = beginTagEnd;
+    int depth = 1;
+    while (searchPos < s.size()) {
+        size_t nextBegin = s.find(beginTag, searchPos);
+        size_t nextEnd   = s.find(endTag, searchPos);
+
+        if (nextEnd == std::string_view::npos) return false;
+
+        if (nextBegin != std::string_view::npos && nextBegin < nextEnd) {
+            ++depth;
+            searchPos = nextBegin + beginTag.size();
+            continue;
+        }
+
+        --depth;
+        searchPos = nextEnd + endTag.size();
+        if (depth == 0) {
+            fullEnd = searchPos;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static double estimateEnvironmentWidth(std::string_view envName,
+                                       std::string_view body,
+                                       double (*estimateTotalWidthFn)(std::string_view));
+
 struct Tokenizer {
     std::string_view src;
     size_t           pos = 0;
@@ -233,17 +423,35 @@ struct Tokenizer {
 
         // ── Case 1: backslash command ──
         if (c == '\\') {
-            // Check for \begin or \end (environments are atomic)
             auto remaining = src.substr(pos);
-            if ((remaining.size() >= 7 && remaining.substr(0, 7) == "\\begin{") ||
-                (remaining.size() >= 5 && remaining.substr(0, 5) == "\\end{")) {
-                // Skip through the closing }
+            if (remaining.size() >= 7 && remaining.substr(0, 7) == "\\begin{") {
+                std::string_view envName;
+                size_t beginTagEnd = 0;
+                size_t envEnd = 0;
+                if (readEnvironment(src, pos, envName, beginTagEnd, envEnd)) {
+                    pos = envEnd;
+                    out.len = pos - out.start;
+                    std::string endTag = "\\end{" + std::string(envName) + "}";
+                    size_t bodyEnd = envEnd - endTag.size();
+                    std::string_view body = src.substr(beginTagEnd, bodyEnd - beginTagEnd);
+                    out.width = estimateEnvironmentWidth(envName, body,
+                                                         [](std::string_view latex) {
+                                                             Tokenizer tz{latex, 0};
+                                                             double w = 0.0;
+                                                             Token tok;
+                                                             while (tz.next(tok)) w += tok.width;
+                                                             return w;
+                                                         });
+                    return true;
+                }
+            }
+            if (remaining.size() >= 5 && remaining.substr(0, 5) == "\\end{") {
                 size_t braceStart = src.find('{', pos);
                 size_t braceEnd = src.find('}', braceStart);
                 if (braceEnd != std::string_view::npos) {
                     pos = braceEnd + 1;
                     out.len = pos - out.start;
-                    out.width = 0.0; // environments contribute via content
+                    out.width = 0.0;
                     return true;
                 }
             }
@@ -251,15 +459,57 @@ struct Tokenizer {
             size_t cmdEnd = readCommand(src, pos);
             std::string_view cmd = src.substr(pos, cmdEnd - pos);
 
-            // Atomic commands: consume their braced arguments as one token
-            if (isAtomicCmd(cmd)) {
+            // Style commands: zero-width directives
+            if (isStyleCmd(cmd)) {
                 pos = cmdEnd;
+                if (cmd == "\\color") {
+                    // \color{name} — skip the color brace group
+                    if (pos < src.size() && src[pos] == '{')
+                        pos = skipBraceGroup(src, pos);
+                    out.len = pos - out.start; out.width = 0.0; return true;
+                }
+                if (cmd == "\\textcolor" || cmd == "\\colorbox") {
+                    // skip {color}, then measure {content}
+                    if (pos < src.size() && src[pos] == '{')
+                        pos = skipBraceGroup(src, pos);
+                    double contentW = 0.0;
+                    if (pos < src.size() && src[pos] == '{') {
+                        size_t end = skipBraceGroup(src, pos);
+                        contentW = estimateBracedWidth(src.substr(pos + 1, end - pos - 2));
+                        pos = end;
+                    }
+                    out.len = pos - out.start; out.width = contentW; return true;
+                }
+                // All other directives (\displaystyle, \phantom, etc.): zero width
+                out.len = pos - out.start; out.width = 0.0; return true;
+            }
+
+            // Font commands: content has normal width, no additional overhead
+            if (isFontCmd(cmd)) {
+                pos = cmdEnd;
+                double contentW = 0.0;
+                if (pos < src.size() && src[pos] == '{') {
+                    size_t end = skipBraceGroup(src, pos);
+                    contentW = estimateBracedWidth(src.substr(pos + 1, end - pos - 2));
+                    pos = end;
+                }
+                out.len = pos - out.start; out.width = contentW; return true;
+            }
+
+            // Structural commands: atomic token, width from estimateStructuralWidth
+            if (isStructuralCmd(cmd)) {
+                pos = cmdEnd;
+                // \sqrt may have an optional [n] index
+                if (cmd == "\\sqrt" && pos < src.size() && src[pos] == '[') {
+                    size_t closeIdx = src.find(']', pos + 1);
+                    if (closeIdx != std::string_view::npos) pos = closeIdx + 1;
+                }
                 // Consume all immediately following brace groups
                 while (pos < src.size() && src[pos] == '{') {
                     pos = skipBraceGroup(src, pos);
                 }
                 out.len = pos - out.start;
-                out.width = estimateAtomicWidth(src.substr(out.start, out.len));
+                out.width = estimateStructuralWidth(src.substr(out.start, out.len));
                 return true;
             }
 
@@ -344,9 +594,9 @@ struct Tokenizer {
         return true;
     }
 
-    // Rough width estimate for an atomic command with its arguments.
-    // e.g. \frac{abc}{de} — width ≈ max(width(abc), width(de))
-    double estimateAtomicWidth(std::string_view s) {
+    // Rough width estimate for a structural command with its arguments.
+    // e.g. \frac{abc}{de} — width ≈ max(width(abc), width(de)) + overhead
+    double estimateStructuralWidth(std::string_view s) {
         // Find the command name
         size_t cmdEnd = 0;
         if (!s.empty() && s[0] == '\\') {
@@ -357,7 +607,7 @@ struct Tokenizer {
         }
         std::string_view cmd = s.substr(0, cmdEnd);
 
-        // Fraction: width ≈ max of numerator, denominator
+        // Fraction/binom: width ≈ max(num, den) + overhead
         if (cmd == "\\frac" || cmd == "\\dfrac" || cmd == "\\tfrac" ||
             cmd == "\\binom") {
             double maxArg = 0.0;
@@ -368,31 +618,67 @@ struct Tokenizer {
                 maxArg = std::max(maxArg, w);
                 p = end;
             }
-            return maxArg + 0.5; // small overhead for fraction bar
+            // \tfrac is smaller, so less overhead
+            double overhead = (cmd == "\\tfrac") ? 0.15 : 0.24;
+            return maxArg + overhead;
         }
 
-        // \sqrt: width ≈ content + radical sign
+        // \sqrt[n]{content}: handle optional index
         if (cmd == "\\sqrt") {
-            if (cmdEnd < s.size() && s[cmdEnd] == '{') {
-                size_t end = skipBraceGroup(s, cmdEnd);
-                return estimateBracedWidth(s.substr(cmdEnd + 1, end - cmdEnd - 2)) + 0.5;
+            size_t p = cmdEnd;
+            double extraW = 0.0;
+            if (p < s.size() && s[p] == '[') {
+                size_t closeIdx = s.find(']', p + 1);
+                if (closeIdx != std::string_view::npos) {
+                    extraW = 0.3;
+                    p = closeIdx + 1;
+                }
             }
+            if (p < s.size() && s[p] == '{') {
+                size_t end = skipBraceGroup(s, p);
+                return estimateBracedWidth(s.substr(p + 1, end - p - 2)) + 0.5 + extraW;
+            }
+            return 0.5 + extraW;
         }
 
-        // Text commands: width ≈ char count × 0.5
-        if (cmd == "\\text" || cmd == "\\mathrm" || cmd == "\\mathit" ||
-            cmd == "\\mathbf" || cmd == "\\operatorname") {
+        // Accent commands: pure content width (accents add no horizontal extent)
+        if (cmd == "\\hat"  || cmd == "\\bar"  || cmd == "\\vec" ||
+            cmd == "\\tilde" || cmd == "\\dot"  || cmd == "\\ddot" ||
+            cmd == "\\overline" || cmd == "\\underline") {
             if (cmdEnd < s.size() && s[cmdEnd] == '{') {
                 size_t end = skipBraceGroup(s, cmdEnd);
-                double charCount = static_cast<double>(end - cmdEnd - 2);
-                return charCount * 0.5;
+                return estimateBracedWidth(s.substr(cmdEnd + 1, end - cmdEnd - 2));
             }
+            return 0.5;
         }
 
-        // Default: sum of character widths
+        // Overbrace/underbrace: just the content width
+        if (cmd == "\\overbrace" || cmd == "\\underbrace") {
+            if (cmdEnd < s.size() && s[cmdEnd] == '{') {
+                size_t end = skipBraceGroup(s, cmdEnd);
+                return estimateBracedWidth(s.substr(cmdEnd + 1, end - cmdEnd - 2));
+            }
+            return 1.0;
+        }
+
+        // \overset{top}{base}, \underset, \stackrel — max of two args
+        if (cmd == "\\overset" || cmd == "\\underset" || cmd == "\\stackrel") {
+            double maxArg = 0.0;
+            size_t p = cmdEnd;
+            while (p < s.size() && s[p] == '{') {
+                size_t end = skipBraceGroup(s, p);
+                double w = estimateBracedWidth(s.substr(p + 1, end - p - 2));
+                maxArg = std::max(maxArg, w);
+                p = end;
+            }
+            return maxArg;
+        }
+
+        // Default: count non-brace characters
         double w = 0.0;
         for (size_t i = cmdEnd; i < s.size(); i++) {
-            w += 0.5;
+            char c = s[i];
+            if (c != '{' && c != '}') w += 0.5;
         }
         return std::max(0.5, w);
     }
@@ -408,6 +694,44 @@ struct Tokenizer {
         return w;
     }
 };
+
+// Free function: sum of all token widths for a latex fragment
+static double estimateTotalWidth(std::string_view latex) {
+    Tokenizer tz{latex, 0};
+    double w = 0.0;
+    Token tok;
+    while (tz.next(tok)) w += tok.width;
+    return w;
+}
+
+static double estimateEnvironmentWidth(std::string_view envName,
+                                       std::string_view body,
+                                       double (*estimateTotalWidthFn)(std::string_view))
+{
+    if (envName == "gathered" || envName == "aligned") {
+        double maxLineWidth = 0.0;
+        size_t start = 0;
+        while (start <= body.size()) {
+            size_t sep = body.find("\\\\", start);
+            size_t end = (sep == std::string_view::npos) ? body.size() : sep;
+            std::string_view line = trimSpaces(body.substr(start, end - start));
+            while (!line.empty() && line.front() == '&') {
+                line.remove_prefix(1);
+                line = trimSpaces(line);
+            }
+            if (line.substr(0, 5) == "\\quad") {
+                line.remove_prefix(5);
+                line = trimSpaces(line);
+            }
+            maxLineWidth = std::max(maxLineWidth, estimateTotalWidthFn(line));
+            if (sep == std::string_view::npos) break;
+            start = sep + 2;
+        }
+        return maxLineWidth;
+    }
+
+    return estimateTotalWidthFn(body);
+}
 
 // ----------------------------------------------------------
 // Tokenize and annotate with delimiter depth
@@ -449,6 +773,11 @@ static std::vector<Breakpoint> extractBreakpoints(
 
         BreakClass bc = tokens[i].breakClass;
         if (bc == BreakClass::None) continue;
+
+        // Never break before a closing delimiter. In particular this avoids
+        // emitting "\\" right before "\right...", which can produce
+        // invalid LaTeX in gathered/aligned output.
+        if (bc == BreakClass::Close) continue;
 
         int dd = tokens[i].delimDepth;
 
@@ -507,10 +836,12 @@ static std::vector<size_t> findOptimalBreaks(
         double slack = lineWidth - contentWidth;
         double badness;
         if (slack < 0) {
-            // Overfull: heavy penalty, but allow slight overflow (10%)
-            if (contentWidth > lineWidth * 1.15)
-                return 1e15; // way too wide, skip
-            badness = 1000.0 + (-slack) * 100.0;
+            // Overfull: keep it expensive, but never impossible.
+            // This ensures we still pick the closest-fit layout when no
+            // perfect solution exists, instead of collapsing to a nearly
+            // unbroken expression because the remainder became "infeasible".
+            double overflowRatio = (-slack) / std::max(lineWidth, 1.0);
+            badness = 1000.0 + 4000.0 * overflowRatio * overflowRatio * overflowRatio;
         } else {
             double ratio = slack / std::max(lineWidth, 1.0);
             badness = 100.0 * ratio * ratio * ratio;
@@ -553,10 +884,7 @@ static std::vector<size_t> findOptimalBreaks(
         if (std::isinf(dp[i].totalDemerit)) continue;
         double remainW = totalWidth - bps[i].cumWidth;
         double lineW = pageWidth - indentStep;
-        // If remainder fits, no additional penalty
-        double demerit = (remainW > lineW * 1.15)
-            ? 1e15
-            : computeDemerit(lineW, remainW, 0.0);
+        double demerit = computeDemerit(lineW, remainW, 0.0);
         double total = dp[i].totalDemerit + demerit;
         if (total < bestTotal) {
             bestTotal = total;
@@ -576,6 +904,80 @@ static std::vector<size_t> findOptimalBreaks(
     std::reverse(breaks.begin(), breaks.end());
 
     return breaks;
+}
+
+static std::vector<size_t> appendTailRescueBreaks(
+    const std::vector<Breakpoint>& bps,
+    std::vector<size_t> breakIndices,
+    double pageWidth,
+    double indentStep,
+    double totalWidth)
+{
+    if (bps.empty()) return breakIndices;
+
+    const double lineWidth = pageWidth - indentStep;
+    if (lineWidth <= 0.0) return breakIndices;
+
+    while (true) {
+        double segmentStartWidth = breakIndices.empty()
+            ? 0.0
+            : bps[breakIndices.back()].cumWidth;
+        double tailWidth = totalWidth - segmentStartWidth;
+
+        // Tail already acceptable.
+        if (tailWidth <= lineWidth * 1.02) break;
+
+        size_t candidateStart = breakIndices.empty() ? 0 : (breakIndices.back() + 1);
+        int best = -1;
+        double bestScore = std::numeric_limits<double>::infinity();
+
+        for (size_t j = candidateStart; j < bps.size(); j++) {
+            double firstWidth = bps[j].cumWidth - segmentStartWidth;
+            double secondWidth = totalWidth - bps[j].cumWidth;
+            if (secondWidth <= 0.0) continue;
+
+            double over1 = std::max(0.0, firstWidth - lineWidth);
+            double over2 = std::max(0.0, secondWidth - lineWidth);
+            double tinyTailPenalty = (secondWidth < lineWidth * 0.12)
+                ? (lineWidth * 0.12 - secondWidth) * 200.0
+                : 0.0;
+            double score = std::max(over1, over2) * 10000.0
+                + over1 * 100.0
+                + over2 * 100.0
+                + std::max(0.0, bps[j].penalty)
+                + tinyTailPenalty;
+
+            if (score < bestScore) {
+                bestScore = score;
+                best = static_cast<int>(j);
+            }
+        }
+
+        if (best < 0) break;
+        breakIndices.push_back(static_cast<size_t>(best));
+    }
+
+    // Secondary heuristic: if the tail ends with a very short addend like
+    // "+1" or "+x", peel it off when the preceding content is already a
+    // substantial final line. This improves cases where the estimator thinks
+    // the combined tail technically fits, but visually the tiny addend should
+    // clearly sit on its own continuation line.
+    size_t candidateStart = breakIndices.empty() ? 0 : (breakIndices.back() + 1);
+    if (candidateStart < bps.size()) {
+        size_t lastCandidate = bps.size() - 1;
+        if (lastCandidate >= candidateStart) {
+            double segmentStartWidth = breakIndices.empty()
+                ? 0.0
+                : bps[breakIndices.back()].cumWidth;
+            double firstWidth = bps[lastCandidate].cumWidth - segmentStartWidth;
+            double secondWidth = totalWidth - bps[lastCandidate].cumWidth;
+            if (firstWidth >= lineWidth * 0.75 && secondWidth > 0.0 && secondWidth <= lineWidth * 0.18) {
+                breakIndices.push_back(lastCandidate);
+            }
+        }
+    }
+
+    return breakIndices;
 }
 
 // ----------------------------------------------------------
@@ -603,6 +1005,35 @@ static std::string_view trim(std::string_view s) {
     return s;
 }
 
+static bool startsWithCloseDelimiterCmd(std::string_view s) {
+    static const std::string_view closers[] = {
+        "\\right", "\\bigr", "\\Bigr", "\\biggr", "\\Biggr",
+        "\\rangle", "\\rvert", "\\rVert", "\\rfloor", "\\rceil", "\\}",
+    };
+    for (auto c : closers) {
+        if (s.size() >= c.size() && s.substr(0, c.size()) == c) return true;
+    }
+    return false;
+}
+
+// Remove invalid line breaks that appear immediately before a closing delimiter.
+// Example fix: "... \\\n+//   \\right) ..."  -> "... \\right) ..."
+static void sanitizeBreaksBeforeClosers(std::string& latex) {
+    size_t pos = 0;
+    const std::string br = "\\\\\n";
+    while ((pos = latex.find(br, pos)) != std::string::npos) {
+        size_t q = pos + br.size();
+        while (q < latex.size() && latex[q] == ' ') ++q;
+        if (q < latex.size() && startsWithCloseDelimiterCmd(std::string_view(latex).substr(q))) {
+            // Replace line break + indentation with a single space.
+            latex.replace(pos, q - pos, " ");
+            if (pos > 0) --pos;
+            continue;
+        }
+        pos = q;
+    }
+}
+
 static std::string emitAligned(
     std::string_view latex,
     const std::vector<Token>& tokens,
@@ -626,33 +1057,33 @@ static std::string emitAligned(
 
         // Current line: from prevEnd to just before this break token
         size_t lineEnd = tok.start;
+        if (bp.breakClass == BreakClass::Close) {
+            // Never emit "\\" immediately before a closing delimiter.
+            // If a breakpoint lands at a close token, treat it as a break
+            // right after the token.
+            lineEnd = tok.start + tok.len;
+        }
         std::string_view lineContent = trim(latex.substr(prevEnd, lineEnd - prevEnd));
 
         if (k == 0) {
-            // First line: use & before relation for alignment
-            if (bp.breakClass == BreakClass::Relation) {
-                out += "  ";
-                out += lineContent;
-                out += " \\\\\n";
-            } else {
-                out += "  ";
-                out += lineContent;
-                out += " \\\\\n";
-            }
+            // First line: keep a leading alignment marker.
+            out += "  &";
+            out += lineContent;
+            out += " \\\\\n";
         } else {
-            // Continuation lines: indent with \quad, align at relation with &
+            // Continuation lines: always keep a leading '&'.
             if (bp.breakClass == BreakClass::Relation) {
-                out += "  ";
+                out += "  &";
                 out += lineContent;
                 out += " \\\\\n";
             } else {
-                out += "  \\quad ";
+                out += "  &";
                 out += lineContent;
                 out += " \\\\\n";
             }
         }
 
-        prevEnd = tok.start;
+        prevEnd = lineEnd;
     }
 
     // Last segment: from the last break to end of string
@@ -667,18 +1098,18 @@ static std::string emitAligned(
         }
 
         if (startsWithRelation) {
-            // Find the relation token and split
-            out += "  \\quad ";
+            out += "  &";
         } else if (!breakIndices.empty()) {
-            out += "  \\quad ";
+            out += "  &";
         } else {
-            out += "  ";
+            out += "  &";
         }
         out += lastLine;
         out += "\n";
     }
 
     out += "\\end{aligned}";
+    sanitizeBreaksBeforeClosers(out);
     return out;
 }
 
@@ -713,10 +1144,14 @@ static std::string emitAlignedAtRelation(
         const Breakpoint& bp = bps[bpIdx];
         const Token& tok = tokens[bp.tokenIndex];
         size_t lineEnd = tok.start;
+        if (bp.breakClass == BreakClass::Close) {
+            // Keep closing delimiters on the same line as their content.
+            lineEnd = tok.start + tok.len;
+        }
         std::string_view lineContent = trim(latex.substr(prevEnd, lineEnd - prevEnd));
 
         if (firstLine) {
-            out += "  ";
+            out += "  &";
             out += lineContent;
             out += " \\\\\n";
             firstLine = false;
@@ -728,13 +1163,13 @@ static std::string emitAlignedAtRelation(
                 out += lineContent;
                 out += " \\\\\n";
             } else {
-                out += "  &\\quad ";
+                out += "  &";
                 out += lineContent;
                 out += " \\\\\n";
             }
         }
 
-        prevEnd = tok.start;
+        prevEnd = lineEnd;
     }
 
     // Last line
@@ -748,7 +1183,7 @@ static std::string emitAlignedAtRelation(
                     lastBp.delimDepth == 0 && hasTopRelation) {
                     out += "  &";
                 } else {
-                    out += "  &\\quad ";
+                    out += "  &";
                 }
             } else {
                 out += "  ";
@@ -761,7 +1196,132 @@ static std::string emitAlignedAtRelation(
     }
 
     out += "\\end{aligned}";
+    sanitizeBreaksBeforeClosers(out);
     return out;
+}
+
+// Emit a \begin{gathered}...\end{gathered} environment (no & column)
+static std::string emitGathered(
+    std::string_view latex,
+    const std::vector<Token>& tokens,
+    const std::vector<Breakpoint>& bps,
+    const std::vector<size_t>& breakIndices)
+{
+    std::string out;
+    out.reserve(latex.size() + breakIndices.size() * 10 + 50);
+    out += "\\begin{gathered}\n";
+
+    size_t prevEnd = 0;
+    for (size_t k = 0; k < breakIndices.size(); k++) {
+        size_t bpIdx = breakIndices[k];
+        const Breakpoint& bp = bps[bpIdx];
+        const Token& tok = tokens[bp.tokenIndex];
+        size_t lineEnd = tok.start;
+        if (bp.breakClass == BreakClass::Close) {
+            // Avoid invalid "\\" before \right-like closers.
+            lineEnd = tok.start + tok.len;
+        }
+        std::string_view lineContent = trim(latex.substr(prevEnd, lineEnd - prevEnd));
+        out += "  ";
+        out += lineContent;
+        out += " \\\\\n";
+        prevEnd = lineEnd;
+    }
+
+    std::string_view lastLine = trim(latex.substr(prevEnd));
+    if (!lastLine.empty()) {
+        out += "  ";
+        out += lastLine;
+        out += "\n";
+    }
+
+    out += "\\end{gathered}";
+    sanitizeBreaksBeforeClosers(out);
+    return out;
+}
+
+// Break a sub-expression (e.g. a numerator) with 85% of the page budget.
+// Returns a gathered/aligned multi-line string if needed, otherwise original.
+static std::string lineBreakInner(std::string_view latex,
+                                  const LineBreakOptions& opts,
+                                  bool useGathered = true)
+{
+    double budget = opts.pageWidth * 0.85;
+    auto tokens = tokenize(latex);
+    if (tokens.empty()) return std::string(latex);
+
+    double totalWidth = 0.0;
+    for (auto& t : tokens) totalWidth += t.width;
+    if (totalWidth <= budget) return std::string(latex);
+
+    auto bps = extractBreakpoints(tokens, opts.maxDelimDepth);
+    if (bps.empty()) return std::string(latex);
+
+    auto breakIndices = findOptimalBreaks(bps, budget, opts.indentStep, totalWidth);
+    if (breakIndices.empty()) return std::string(latex);
+    breakIndices = appendTailRescueBreaks(bps, std::move(breakIndices),
+                                          budget, opts.indentStep, totalWidth);
+
+    if (useGathered)
+        return emitGathered(latex, tokens, bps, breakIndices);
+    return emitAligned(latex, tokens, bps, breakIndices);
+}
+
+// Scan for wide fractions and recursively break their wide arguments.
+static std::string preprocessWideFractions(std::string_view latex,
+                                           const LineBreakOptions& opts)
+{
+    std::string result;
+    result.reserve(latex.size());
+
+    size_t pos = 0;
+    while (pos < latex.size()) {
+        if (latex[pos] != '\\') {
+            result += latex[pos++];
+            continue;
+        }
+
+        size_t cmdEnd = readCommand(latex, pos);
+        std::string_view cmd = latex.substr(pos, cmdEnd - pos);
+
+        bool isFrac = (cmd == "\\frac" || cmd == "\\dfrac" || cmd == "\\tfrac");
+        if (!isFrac) {
+            result += latex.substr(pos, cmdEnd - pos);
+            pos = cmdEnd;
+            continue;
+        }
+
+        // Threshold: promote when an argument is too wide for the actual
+        // continuation-line budget, not the full first-line width.
+        // This is important for long sums of fractions where most terms land
+        // on indented continuation lines.
+        double continuationWidth = std::max(1.0, opts.pageWidth - opts.indentStep);
+        double threshold = (cmd == "\\tfrac")
+            ? continuationWidth * 1.3
+            : continuationWidth * 0.9;
+
+        // Emit the \frac/\dfrac command
+        result += latex.substr(pos, cmdEnd - pos);
+        pos = cmdEnd;
+
+        // Process up to 2 brace groups (numerator, denominator)
+        for (int argIdx = 0; argIdx < 2 && pos < latex.size() && latex[pos] == '{'; argIdx++) {
+            size_t end = skipBraceGroup(latex, pos);
+            std::string_view argContent = latex.substr(pos + 1, end - pos - 2);
+            double argWidth = estimateTotalWidth(argContent);
+            if (argWidth > threshold) {
+                std::string broken = lineBreakInner(argContent, opts, true);
+                result += '{';
+                result += broken;
+                result += '}';
+            } else {
+                result += latex.substr(pos, end - pos);
+            }
+            pos = end;
+        }
+    }
+
+    return result;
 }
 
 } // anonymous namespace
@@ -776,25 +1336,40 @@ std::string lineBreakLatex(std::string_view latex,
     if (latex.find("\\\\") != std::string_view::npos) return std::string(latex);
     if (latex.find("\\begin{") != std::string_view::npos) return std::string(latex);
 
+    // Compute effective page width (pixel-based takes priority over em-based)
+    double effectivePageWidth = opts.pageWidth;
+    if (opts.pageWidthPx > 0.0)
+        effectivePageWidth = opts.pageWidthPx / opts.baseFontSizePx;
+
+    // Build inner options with the resolved page width
+    LineBreakOptions innerOpts = opts;
+    innerOpts.pageWidth = effectivePageWidth;
+
+    // Pre-process wide fractions (may inject \begin{gathered} inside args)
+    std::string preprocessed = preprocessWideFractions(latex, innerOpts);
+    std::string_view input = preprocessed;
+
     // Tokenize
-    auto tokens = tokenize(latex);
-    if (tokens.empty()) return std::string(latex);
+    auto tokens = tokenize(input);
+    if (tokens.empty()) return preprocessed;
 
     // Compute total width
     double totalWidth = 0.0;
     for (auto& t : tokens) totalWidth += t.width;
 
-    // If it fits, return unchanged
-    if (totalWidth <= opts.pageWidth) return std::string(latex);
+    // If it fits, return preprocessed (may have inner line-breaks)
+    if (totalWidth <= effectivePageWidth) return preprocessed;
 
     // Extract breakpoints
     auto bps = extractBreakpoints(tokens, opts.maxDelimDepth);
-    if (bps.empty()) return std::string(latex); // no break candidates
+    if (bps.empty()) return preprocessed;
 
     // Find optimal breaks
-    auto breakIndices = findOptimalBreaks(bps, opts.pageWidth,
+    auto breakIndices = findOptimalBreaks(bps, effectivePageWidth,
                                           opts.indentStep, totalWidth);
-    if (breakIndices.empty()) return std::string(latex); // no feasible solution
+    if (breakIndices.empty()) return preprocessed;
+    breakIndices = appendTailRescueBreaks(bps, std::move(breakIndices),
+                                          effectivePageWidth, opts.indentStep, totalWidth);
 
     // Determine layout: check LHS width for straight ladder vs staggered
     double lhsWidth = findLHSWidth(tokens);
@@ -808,12 +1383,12 @@ std::string lineBreakLatex(std::string_view latex,
 
     // Use aligned-at-relation if we have top-level relations
     // and LHS is not too wide (< 40% of page width)
-    if (hasTopRelation && lhsWidth < opts.pageWidth * 0.4) {
-        return emitAlignedAtRelation(latex, tokens, bps, breakIndices);
+    if (hasTopRelation && lhsWidth < effectivePageWidth * 0.4) {
+        return emitAlignedAtRelation(input, tokens, bps, breakIndices);
     }
 
     // Otherwise, use simple aligned with quad indents
-    return emitAligned(latex, tokens, bps, breakIndices);
+    return emitAligned(input, tokens, bps, breakIndices);
 }
 
 } // namespace wolfbook

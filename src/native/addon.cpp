@@ -76,6 +76,12 @@ Napi::Value JsLineBreakLatex(const Napi::CallbackInfo& info) {
             opts.compact = jsOpts.Get("compact").As<Napi::Boolean>().Value();
         if (jsOpts.Has("maxDelimDepth"))
             opts.maxDelimDepth = jsOpts.Get("maxDelimDepth").As<Napi::Number>().Int32Value();
+        if (jsOpts.Has("pageWidthPx"))
+            opts.pageWidthPx = jsOpts.Get("pageWidthPx").As<Napi::Number>().DoubleValue();
+        if (jsOpts.Has("baseFontSizePx"))
+            opts.baseFontSizePx = jsOpts.Get("baseFontSizePx").As<Napi::Number>().DoubleValue();
+        if (jsOpts.Has("maxIterations"))
+            opts.maxIterations = jsOpts.Get("maxIterations").As<Napi::Number>().Int32Value();
     }
 
     std::string result = wolfbook::lineBreakLatex(latex, opts);

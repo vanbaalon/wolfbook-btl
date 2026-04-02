@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>BTL Width Calibration</title>
+<!-- KaTeX CDN -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<style>
+  body { font-family: monospace; margin: 20px; }
+  h2 { margin-top: 24px; border-bottom: 1px solid #aaa; }
+  .row { margin: 8px 0; }
+  .label { color: #666; font-size: 12px; }
+  .math-wrap { display: inline-block; background: #f7f7f7; padding: 4px 8px; border: 1px solid #ddd; }
+  .result { font-size: 13px; margin: 4px 0 4px 16px; color: #333; }
+  .key { font-weight: bold; color: #005a9e; }
+  table { border-collapse: collapse; margin: 8px 0; }
+  td, th { border: 1px solid #ccc; padding: 4px 10px; font-size: 13px; }
+  th { background: #eee; }
+  .good { color: green; }
+  .bad  { color: red; }
+  #font-size-control { margin: 12px 0; }
+</style>
+</head>
+<body>
+
+<h1>BTL lineBreakLatex — Width Calibration</h1>
+<p>This page renders expressions at a chosen font size and measures actual KaTeX pixel widths.
+The <em>C++ em threshold</em> is the minimum pageWidth at which lineBreakLatex does NOT break the expression.</p>
+
+<div id="font-size-control">
+  Font size (px): 
+  <input id="fsInput" type="number" value="14" min="8" max="32" style="width:50px">
+  <button onclick="runAll()">Re-measure</button>
+  &nbsp;&nbsp;
+  <span id="summary" style="color:#005a9e; font-weight:bold;"></span>
+</div>
+
+<div id="output"></div>
+
+<script>
+// ── Test data ─────────────────────────────────────────────────────────────────
+const expressions = [
+  {
+    name: 'x+1  (trivial)',
+    latex: 'x+1',
+    cppThreshold: 2,
+  },
+  {
+    name: 'Sum n=5  (5 fractions)',
+    latex: '\\frac{x^5}{x^5+5}+\\frac{x^4}{x^4+4}+\\frac{x^3}{x^3+3}+\\frac{x^2}{x^2+2}+\\frac{x}{x+1}',
+    cppThreshold: 16,
+  },
+  {
+    name: 'Sum n=20  (20 fractions)',
+    latex: '\\frac{x^{20}}{x^{20}+20}+\\frac{x^{19}}{x^{19}+19}+\\frac{x^{18}}{x^{18}+18}+\\frac{x^{17}}{x^{17}+17}+\\frac{x^{16}}{x^{16}+16}+\\frac{x^{15}}{x^{15}+15}+\\frac{x^{14}}{x^{14}+14}+\\frac{x^{13}}{x^{13}+13}+\\frac{x^{12}}{x^{12}+12}+\\frac{x^{11}}{x^{11}+11}+\\frac{x^{10}}{x^{10}+10}+\\frac{x^9}{x^9+9}+\\frac{x^8}{x^8+8}+\\frac{x^7}{x^7+7}+\\frac{x^6}{x^6+6}+\\frac{x^5}{x^5+5}+\\frac{x^4}{x^4+4}+\\frac{x^3}{x^3+3}+\\frac{x^2}{x^2+2}+\\frac{x}{x+1}',
+    cppThreshold: 74,
+  },
+  {
+    name: 'Sum n=100  (100 fractions)',
+    latex: '\\frac{x^{100}}{x^{100}+100}+\\frac{x^{99}}{x^{99}+99}+\\frac{x^{98}}{x^{98}+98}+\\frac{x^{97}}{x^{97}+97}+\\frac{x^{96}}{x^{96}+96}+\\frac{x^{95}}{x^{95}+95}+\\frac{x^{94}}{x^{94}+94}+\\frac{x^{93}}{x^{93}+93}+\\frac{x^{92}}{x^{92}+92}+\\frac{x^{91}}{x^{91}+91}+\\frac{x^{90}}{x^{90}+90}+\\frac{x^{89}}{x^{89}+89}+\\frac{x^{88}}{x^{88}+88}+\\frac{x^{87}}{x^{87}+87}+\\frac{x^{86}}{x^{86}+86}+\\frac{x^{85}}{x^{85}+85}+\\frac{x^{84}}{x^{84}+84}+\\frac{x^{83}}{x^{83}+83}+\\frac{x^{82}}{x^{82}+82}+\\frac{x^{81}}{x^{81}+81}+\\frac{x^{80}}{x^{80}+80}+\\frac{x^{79}}{x^{79}+79}+\\frac{x^{78}}{x^{78}+78}+\\frac{x^{77}}{x^{77}+77}+\\frac{x^{76}}{x^{76}+76}+\\frac{x^{75}}{x^{75}+75}+\\frac{x^{74}}{x^{74}+74}+\\frac{x^{73}}{x^{73}+73}+\\frac{x^{72}}{x^{72}+72}+\\frac{x^{71}}{x^{71}+71}+\\frac{x^{70}}{x^{70}+70}+\\frac{x^{69}}{x^{69}+69}+\\frac{x^{68}}{x^{68}+68}+\\frac{x^{67}}{x^{67}+67}+\\frac{x^{66}}{x^{66}+66}+\\frac{x^{65}}{x^{65}+65}+\\frac{x^{64}}{x^{64}+64}+\\frac{x^{63}}{x^{63}+63}+\\frac{x^{62}}{x^{62}+62}+\\frac{x^{61}}{x^{61}+61}+\\frac{x^{60}}{x^{60}+60}+\\frac{x^{59}}{x^{59}+59}+\\frac{x^{58}}{x^{58}+58}+\\frac{x^{57}}{x^{57}+57}+\\frac{x^{56}}{x^{56}+56}+\\frac{x^{55}}{x^{55}+55}+\\frac{x^{54}}{x^{54}+54}+\\frac{x^{53}}{x^{53}+53}+\\frac{x^{52}}{x^{52}+52}+\\frac{x^{51}}{x^{51}+51}+\\frac{x^{50}}{x^{50}+50}+\\frac{x^{49}}{x^{49}+49}+\\frac{x^{48}}{x^{48}+48}+\\frac{x^{47}}{x^{47}+47}+\\frac{x^{46}}{x^{46}+46}+\\frac{x^{45}}{x^{45}+45}+\\frac{x^{44}}{x^{44}+44}+\\frac{x^{43}}{x^{43}+43}+\\frac{x^{42}}{x^{42}+42}+\\frac{x^{41}}{x^{41}+41}+\\frac{x^{40}}{x^{40}+40}+\\frac{x^{39}}{x^{39}+39}+\\frac{x^{38}}{x^{38}+38}+\\frac{x^{37}}{x^{37}+37}+\\frac{x^{36}}{x^{36}+36}+\\frac{x^{35}}{x^{35}+35}+\\frac{x^{34}}{x^{34}+34}+\\frac{x^{33}}{x^{33}+33}+\\frac{x^{32}}{x^{32}+32}+\\frac{x^{31}}{x^{31}+31}+\\frac{x^{30}}{x^{30}+30}+\\frac{x^{29}}{x^{29}+29}+\\frac{x^{28}}{x^{28}+28}+\\frac{x^{27}}{x^{27}+27}+\\frac{x^{26}}{x^{26}+26}+\\frac{x^{25}}{x^{25}+25}+\\frac{x^{24}}{x^{24}+24}+\\frac{x^{23}}{x^{23}+23}+\\frac{x^{22}}{x^{22}+22}+\\frac{x^{21}}{x^{21}+21}+\\frac{x^{20}}{x^{20}+20}+\\frac{x^{19}}{x^{19}+19}+\\frac{x^{18}}{x^{18}+18}+\\frac{x^{17}}{x^{17}+17}+\\frac{x^{16}}{x^{16}+16}+\\frac{x^{15}}{x^{15}+15}+\\frac{x^{14}}{x^{14}+14}+\\frac{x^{13}}{x^{13}+13}+\\frac{x^{12}}{x^{12}+12}+\\frac{x^{11}}{x^{11}+11}+\\frac{x^{10}}{x^{10}+10}+\\frac{x^9}{x^9+9}+\\frac{x^8}{x^8+8}+\\frac{x^7}{x^7+7}+\\frac{x^6}{x^6+6}+\\frac{x^5}{x^5+5}+\\frac{x^4}{x^4+4}+\\frac{x^3}{x^3+3}+\\frac{x^2}{x^2+2}+\\frac{x}{x+1}',
+    cppThreshold: 403, // binary-search result for full n=100 expression
+  },
+];
+
+// ── Measure rendered width in px ──────────────────────────────────────────────
+function measureLatex(latex, fontSize) {
+  const container = document.createElement('div');
+  container.style.cssText = `
+    position: absolute; visibility: hidden; white-space: nowrap;
+    font-size: ${fontSize}px; font-family: KaTeX_Main, "Times New Roman", serif;
+    top: -9999px; left: -9999px;
+  `;
+  const span = document.createElement('span');
+  katex.render(latex, span, { throwOnError: false, displayMode: false });
+  container.appendChild(span);
+  document.body.appendChild(container);
+  const w = span.getBoundingClientRect().width;
+  document.body.removeChild(container);
+  return w;
+}
+
+function runAll() {
+  const fontSize = parseFloat(document.getElementById('fsInput').value) || 14;
+  const out = document.getElementById('output');
+  out.innerHTML = '';
+
+  const ratios = [];
+
+  for (const expr of expressions) {
+    const section = document.createElement('div');
+    const pxWidth = measureLatex(expr.latex, fontSize);
+    const ratio = pxWidth / expr.cppThreshold;
+    ratios.push(ratio);
+
+    const suggestedFactor = ratio.toFixed(2);
+    const currentFactor = 14;
+    const currentPageWidth = Math.round(pxWidth / currentFactor);
+    const correctPageWidth = expr.cppThreshold; // by definition, the threshold
+
+    section.innerHTML = `
+      <h2>${expr.name}</h2>
+      <div class="row">
+        <span class="label">Rendered expression (font-size: ${fontSize}px):</span><br>
+        <div class="math-wrap" id="math_${expr.cppThreshold}"></div>
+      </div>
+      <table>
+        <tr><th>Metric</th><th>Value</th></tr>
+        <tr><td>Actual KaTeX pixel width</td><td class="key">${pxWidth.toFixed(1)} px</td></tr>
+        <tr><td>C++ em threshold (correct pageWidth to pass)</td><td class="key">${expr.cppThreshold} em</td></tr>
+        <tr><td>px per C++ em  (= ${pxWidth.toFixed(0)} / ${expr.cppThreshold})</td><td class="key">${ratio.toFixed(3)} px/em</td></tr>
+        <tr><td>Current code: pageWidth = round(${pxWidth.toFixed(0)} / 14) = </td>
+            <td class="${Math.abs(currentPageWidth - expr.cppThreshold) <= 5 ? 'good' : 'bad'}">${currentPageWidth}  (error: ${currentPageWidth - expr.cppThreshold > 0 ? '+':''}${currentPageWidth - expr.cppThreshold})</td></tr>
+        <tr><td>Corrected: pageWidth = round(${pxWidth.toFixed(0)} / ${suggestedFactor}) = </td>
+            <td class="good">${Math.round(pxWidth / ratio)} (should = ${expr.cppThreshold})</td></tr>
+      </table>
+    `;
+    out.appendChild(section);
+
+    // Render math
+    const mathEl = document.getElementById(`math_${expr.cppThreshold}`);
+    if (mathEl) {
+      katex.render(expr.latex, mathEl, { throwOnError: false, displayMode: false });
+    }
+  }
+
+  // Summary
+  const avgRatio = ratios.reduce((a,b)=>a+b,0) / ratios.length;
+  const minRatio = Math.min(...ratios);
+  const maxRatio = Math.max(...ratios);
+  document.getElementById('summary').textContent =
+    `At ${fontSize}px: avg ratio = ${avgRatio.toFixed(2)} px/C++em  (range ${minRatio.toFixed(2)}–${maxRatio.toFixed(2)})  → use divisor ≈ ${avgRatio.toFixed(1)}`;
+
+  // Table comparing divisors
+  const div = document.createElement('div');
+  div.innerHTML = `
+    <h2>Comparison: divisors 10–20 px/em</h2>
+    <table>
+      <tr><th>Divisor</th>${expressions.map(e=>`<th>${e.name.split(' ')[0]} ${e.name.split(' ')[1]}</th>`).join('')}<th>Avg error</th></tr>
+      ${[10,11,12,13,14,15,16,17,18,19,20].map(d => {
+        const errors = expressions.map(e => {
+          const px = measureLatex(e.latex, fontSize);
+          const passed = Math.round(px / d);
+          return passed - e.cppThreshold;
+        });
+        const avgErr = (errors.reduce((a,b)=>a+Math.abs(b),0)/errors.length).toFixed(1);
+        const highlight = d === Math.round(avgRatio) ? ' style="background:#ffffaa"' : '';
+        return `<tr${highlight}><td>${d}</td>${errors.map(e=>`<td class="${Math.abs(e)<=5?'good':'bad'}">${e>0?'+':''}${e}</td>`).join('')}<td>${avgErr}</td></tr>`;
+      }).join('')}
+    </table>
+    <p><em>Error = (pageWidth we'd pass) − (correct C++ em threshold). Zero = perfect.</em></p>
+    <p><em>Highlighted row = closest to measured average ratio (${avgRatio.toFixed(1)}).</em></p>
+  `;
+  out.appendChild(div);
+}
+
+window.onload = runAll;
+</script>
+</body>
+</html>

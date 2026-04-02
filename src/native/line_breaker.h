@@ -16,10 +16,14 @@
 namespace wolfbook {
 
 struct LineBreakOptions {
-    double pageWidth    = 80.0;  // target width in approximate em units
-    double indentStep   = 2.0;   // continuation line indent (em)
-    bool   compact      = false; // prefer fewer lines over aligned breaks
-    int    maxDelimDepth = 2;    // max delimiter nesting for breaks
+    double pageWidth     = 80.0;  // target width in approximate em units
+    double indentStep    = 2.0;   // continuation line indent (em)
+    bool   compact       = false; // prefer fewer lines over aligned breaks
+    int    maxDelimDepth = 2;     // max delimiter nesting for breaks
+    // Pixel-based width (takes priority over pageWidth when > 0)
+    double pageWidthPx    = 0.0;  // CSS pixel target (0 = disabled)
+    double baseFontSizePx = 16.0; // em↔px: effectivePageWidth = pageWidthPx / baseFontSizePx
+    int    maxIterations  = 0;    // for TypeScript iterative wrapper
 };
 
 // Apply line-breaking to a single-line LaTeX string.

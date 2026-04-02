@@ -61,6 +61,15 @@ export interface LineBreakOptions {
   compact?: boolean;
   /** Max delimiter nesting depth for breaks (default: 2). */
   maxDelimDepth?: number;
+  /**
+   * CSS pixel width target. When > 0 takes priority over `pageWidth` and
+   * enables the `effectivePageWidth = pageWidthPx / baseFontSizePx` conversion.
+   */
+  pageWidthPx?: number;
+  /** Base font size in px used for em↔px conversion (default: 16). */
+  baseFontSizePx?: number;
+  /** Maximum iterations for the TypeScript iterative-refinement wrapper (default: 0). */
+  maxIterations?: number;
 }
 
 /**

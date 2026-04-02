@@ -166,11 +166,18 @@
       overflow: auto;
       display: flex;
       align-items: flex-start;
-      justify-content: center;
+      justify-content: flex-start;
       background: var(--bg);
     }
     #katex-display .placeholder { color: var(--muted); font-size: .85rem; }
     #katex-display .katex-error { color: var(--red); font-family: var(--font-mono); font-size: .82rem; }
+    #katex-display .katex-display {
+      margin: 0 !important;
+      text-align: left !important;
+    }
+    #katex-display .katex-display > .katex {
+      text-align: left !important;
+    }
 
     /* ---- Example snippets ---- */
     #examples-panel {
@@ -208,6 +215,96 @@
       #latex-panel  { grid-column: 1; grid-row: 2; }
       #katex-panel  { grid-column: 1; grid-row: 3; }
       #examples-panel { grid-row: 4; grid-column: 1; }
+    }
+
+    /* ──── Line Breaker section ──── */
+    #lb-section { border-top: 2px solid var(--border); display: flex; flex-direction: column; }
+    #lb-controls {
+      display: flex; align-items: center; gap: 14px;
+      padding: 8px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    #lb-controls .ctl-label {
+      font-size: .78rem; font-weight: 700; letter-spacing: .05em;
+      text-transform: uppercase; color: var(--accent); margin-right: 4px;
+    }
+    #lb-controls label        { font-size: .78rem; color: var(--muted); white-space: nowrap; }
+    #lb-controls .ctl-group   { display: flex; align-items: center; gap: 5px; }
+    #lb-controls .ctl-unit    { font-size: .75rem; color: var(--muted); }
+    #lb-controls input[type="range"]  { width: 110px; cursor: pointer; accent-color: var(--accent); }
+    #lb-controls input[type="number"] {
+      width: 56px; background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: 3px 6px; font-size: .82rem; font-family: var(--font-mono);
+    }
+    #lb-sep    { flex: 1; }
+    #btn-break { background: var(--green); color: var(--bg); }
+    #lb-examples {
+      display: flex; flex-wrap: wrap; gap: 5px;
+      padding: 7px 16px; border-bottom: 1px solid var(--border); background: var(--bg);
+    }
+    .lb-ex-btn {
+      background: var(--surface); color: var(--muted);
+      border: 1px solid var(--border); font-size: .72rem;
+      padding: 3px 10px; border-radius: var(--radius); cursor: pointer;
+    }
+    .lb-ex-btn:hover { color: var(--text); }
+    #lb-body  { display: grid; grid-template-columns: 1fr 1fr; flex: 1; }
+    #lb-left  { display: flex; flex-direction: column; border-right: 1px solid var(--border); }
+    #lb-right { display: flex; flex-direction: column; }
+    .lb-sub-label {
+      padding: 6px 16px; font-size: .7rem; font-weight: 600;
+      letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+      border-bottom: 1px solid var(--border); background: var(--surface);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    #lb-latex-in {
+      height: 100px; background: var(--surface); color: var(--text);
+      border: none; border-bottom: 1px solid var(--border); outline: none;
+      resize: vertical; font-family: var(--font-mono); font-size: .85rem;
+      line-height: 1.6; padding: 10px 16px; width: 100%;
+    }
+    #lb-latex-out {
+      flex: 1; font-family: var(--font-mono); font-size: .82rem;
+      padding: 12px 16px; white-space: pre-wrap; word-break: break-all;
+      line-height: 1.7; background: var(--bg); overflow: auto;
+      min-height: 100px; color: var(--yellow);
+    }
+    #lb-latex-out.lb-ph { color: var(--muted); }
+    #lb-katex-wrap {
+      flex: 1; position: relative; overflow: auto;
+      background: var(--bg); min-height: 200px;
+    }
+    /* Dashed ruler = page-width boundary. left set dynamically via JS */
+    #lb-ruler {
+      position: absolute; top: 0; bottom: 0; left: 0;
+      width: 0; border-left: 2px dashed rgba(189,147,249,0.65);
+      pointer-events: none; z-index: 5;
+    }
+    #lb-ruler-right {
+      position: absolute; top: 0; bottom: 0; left: 0;
+      width: 0; border-left: 2px dashed rgba(80,250,123,0.55);
+      pointer-events: none; z-index: 5;
+    }
+    /* Red tint zone to the right of the ruler */
+    #lb-overflow-zone {
+      position: absolute; top: 0; bottom: 0; left: 0; right: 0;
+      background: rgba(255,85,85,0.055); pointer-events: none; z-index: 4;
+    }
+    /* Math rendered here; font-size = pxPerEm so ruler calibration holds */
+    #lb-katex-inner {
+      position: relative; z-index: 1;
+      padding: 20px 24px; display: block; min-width: 100%; text-align: left;
+    }
+    #lb-katex-inner .katex { color: var(--text) !important; }
+    #lb-katex-inner .katex-display {
+      margin: 0 !important;
+      text-align: left !important;
+    }
+    #lb-katex-inner .katex-display > .katex {
+      text-align: left !important;
     }
   </style>
 </head>
@@ -269,6 +366,100 @@ UnderoverscriptBox["\[Sum]",RowBox[{"n","=","1"}],"\[Infinity]"]'></textarea>
   <div id="error-banner"></div>
 
 </main>
+
+<!-- ════════════════════════════════════════════════════════
+     Line Breaker section
+     ════════════════════════════════════════════════════════ -->
+<section id="lb-section">
+
+  <!-- Controls bar -->
+  <div id="lb-controls">
+    <span class="ctl-label">Line Breaker</span>
+    <div class="ctl-group">
+      <label for="lb-pw-slider">pageWidth</label>
+      <input type="range"  id="lb-pw-slider" min="5" max="120" step="1" value="40">
+      <input type="number" id="lb-pw-num"    min="5" max="120"           value="40">
+      <span class="ctl-unit">em</span>
+    </div>
+    <div class="ctl-group">
+      <label for="lb-pxem" title="Pixels per C++ em unit — adjust to calibrate the ruler">px/em</label>
+      <input type="number" id="lb-pxem" min="6" max="48" step="0.5" value="16"
+             title="Pixels per C++ em unit — adjust until the ruler aligns with actual rendered width">
+    </div>
+    <div class="ctl-group">
+      <label for="lb-indent">indent</label>
+      <input type="number" id="lb-indent" min="0" max="8" step="0.5" value="2">
+      <span class="ctl-unit">em</span>
+    </div>
+    <div class="ctl-group">
+      <label for="lb-pwpx">pageWidthPx</label>
+      <input type="number" id="lb-pwpx" min="0" max="4000" step="1" value="0"
+             title="0 disables px-based width mode">
+      <span class="ctl-unit">px</span>
+    </div>
+    <div class="ctl-group">
+      <label for="lb-basepx">baseFontSizePx</label>
+      <input type="number" id="lb-basepx" min="8" max="64" step="0.5" value="16">
+      <span class="ctl-unit">px</span>
+    </div>
+    <div class="ctl-group">
+      <label for="lb-depth">maxDelimDepth</label>
+      <input type="number" id="lb-depth" min="0" max="10" step="1" value="2">
+    </div>
+    <div class="ctl-group">
+      <label for="lb-iter">maxIterations</label>
+      <input type="number" id="lb-iter" min="0" max="20" step="1" value="0">
+    </div>
+    <div class="ctl-group">
+      <label for="lb-compact">compact</label>
+      <input type="checkbox" id="lb-compact" />
+    </div>
+    <span id="lb-sep"></span>
+    <button id="btn-break">Break ↵</button>
+  </div>
+
+  <!-- Quick LaTeX examples -->
+  <div id="lb-examples"></div>
+
+  <!-- Two-column body -->
+  <div id="lb-body">
+
+    <!-- Left: input + broken source output -->
+    <div id="lb-left">
+      <div class="lb-sub-label">
+        LaTeX input
+        <span id="lb-fill-btn" style="cursor:pointer;color:var(--accent);font-weight:400"
+              title="Copy last translate result into input">← from translate</span>
+      </div>
+      <textarea id="lb-latex-in" spellcheck="false"
+        placeholder="Paste a LaTeX expression — or translate a WL box first, then click ← from translate&#10;Ctrl/Cmd+Enter to break"></textarea>
+      <div class="lb-sub-label">Broken output</div>
+      <div id="lb-latex-out" class="lb-ph">— press Break —</div>
+    </div>
+
+    <!-- Right: KaTeX render with width-ruler overlay -->
+    <div id="lb-right">
+      <div class="lb-sub-label">
+        KaTeX render
+        <span id="lb-ruler-info"
+              style="font-family:var(--font-mono);font-size:.75rem;color:var(--accent)"></span>
+      </div>
+      <div id="lb-katex-wrap">
+        <!-- Dashed purple line = page-width boundary -->
+        <div id="lb-ruler"></div>
+        <!-- Dashed green line = mirrored page-width boundary from the right -->
+        <div id="lb-ruler-right"></div>
+        <!-- Red tint = overflow zone (content should stay left of ruler) -->
+        <div id="lb-overflow-zone"></div>
+        <!-- KaTeX output; font-size = pxPerEm for ruler calibration -->
+        <div id="lb-katex-inner">
+          <span style="color:var(--muted);font-size:.85rem">— press Break to render —</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
 
 <script>
 // ==============================================================
@@ -441,6 +632,155 @@ document.getElementById('btn-clear').addEventListener('click', () => {
 // KaTeX is loaded defer; re-render once it's ready if we already have latex
 document.addEventListener('DOMContentLoaded', () => {
   if (lastLatex) renderKatex(lastLatex);
+});
+
+// ==============================================================
+// Line Breaker section
+// ==============================================================
+const LB_PAD_LEFT  = 24; // must match padding-left on #lb-katex-inner in CSS
+const lbPwSlider   = document.getElementById('lb-pw-slider');
+const lbPwNum      = document.getElementById('lb-pw-num');
+const lbPxEm       = document.getElementById('lb-pxem');
+const lbIndentNum  = document.getElementById('lb-indent');
+const lbPwPxNum    = document.getElementById('lb-pwpx');
+const lbBasePxNum  = document.getElementById('lb-basepx');
+const lbDepthNum   = document.getElementById('lb-depth');
+const lbIterNum    = document.getElementById('lb-iter');
+const lbCompactChk = document.getElementById('lb-compact');
+const lbLatexIn    = document.getElementById('lb-latex-in');
+const lbLatexOut   = document.getElementById('lb-latex-out');
+const lbKatexWrap  = document.getElementById('lb-katex-wrap');
+const lbKatexInner = document.getElementById('lb-katex-inner');
+const lbRuler      = document.getElementById('lb-ruler');
+const lbRulerRight = document.getElementById('lb-ruler-right');
+const lbOverflowZ  = document.getElementById('lb-overflow-zone');
+const lbRulerInfo  = document.getElementById('lb-ruler-info');
+
+// ── Pre-set LaTeX test expressions ──────────────────────────────
+const LB_EXAMPLES = [
+  ['α+β+…',      '\\alpha+\\beta+\\gamma+\\delta+\\epsilon+\\zeta+\\eta+\\theta+\\iota+\\kappa+\\lambda+\\mu = \\nu+\\xi+\\pi+\\rho+\\sigma+\\tau'],
+  ['x₁+…+x₁₀',  'x_1+x_2+x_3+x_4+x_5+x_6+x_7+x_8+x_9+x_{10} = y_1+y_2+y_3+y_4+y_5+y_6'],
+  ['Leibniz π',  '\\sum_{n=0}^{\\infty}\\frac{(-1)^n}{2n+1} = 1-\\frac{1}{3}+\\frac{1}{5}-\\frac{1}{7}+\\frac{1}{9}-\\frac{1}{11}+\\cdots = \\frac{\\pi}{4}'],
+  ['∏ product',  '\\prod_{k=1}^{N}(1+x_k) = 1+\\sum_{k}x_k+\\sum_{k<j}x_k x_j+\\cdots+x_1 x_2\\cdots x_N'],
+  ['frac chain', '\\frac{\\alpha^2+\\beta^2}{\\gamma+\\delta}+\\frac{\\varepsilon^2+\\zeta^2}{\\eta+\\theta}+\\frac{\\iota+\\kappa}{\\lambda\\mu} = \\frac{\\nu+\\xi}{\\pi+\\rho+\\sigma}'],
+  ['wide frac',  '\\frac{a^2+b^2+c^2+d^2+e^2}{f^2+g^2+h^2+i^2+j^2} = \\frac{\\alpha+\\beta+\\gamma+\\delta+\\epsilon}{\\zeta+\\eta+\\theta+\\iota}'],
+  ['nested Σ',   '\\sum_{i=0}^{m}\\sum_{j=0}^{n} a_{ij} x^i y^j = \\sum_{k=0}^{m+n} c_k z^k'],
+];
+const lbExBar = document.getElementById('lb-examples');
+LB_EXAMPLES.forEach(([label, latex]) => {
+  const btn = document.createElement('button');
+  btn.className = 'lb-ex-btn';
+  btn.textContent = label;
+  btn.title = latex;
+  btn.onclick = () => { lbLatexIn.value = latex; doBreak(); };
+  lbExBar.appendChild(btn);
+});
+
+// ── Ruler position ───────────────────────────────────────────────
+// The ruler (dashed purple line) sits at:
+//   LB_PAD_LEFT + pageWidth * pxPerEm   pixels from the container left edge
+//
+// Adjust px/em until the ruler aligns with where the C++ algorithm
+// thinks the line ends — it's the same K calibration as in the extension.
+function updateRuler() {
+  const pw   = parseFloat(lbPwNum.value) || 40;
+  const pxEm = parseFloat(lbPxEm.value) || 16;
+  const pwPx = parseFloat(lbPwPxNum.value) || 0;
+  const basePx = parseFloat(lbBasePxNum.value) || 16;
+  const widthPx = Math.round(pw * pxEm);
+  const leftX   = LB_PAD_LEFT + widthPx;
+  const wrapW   = lbKatexWrap.clientWidth || 0;
+  const rightX  = Math.max(LB_PAD_LEFT, wrapW - LB_PAD_LEFT - widthPx);
+  lbRuler.style.left      = leftX + 'px';
+  lbRulerRight.style.left = rightX + 'px';
+  lbOverflowZ.style.left  = leftX + 'px';
+  const effectiveEm = pwPx > 0 ? (pwPx / basePx) : pw;
+  lbRulerInfo.textContent = `${pw} em (eff ${effectiveEm.toFixed(2)} em) · ${pxEm} px/em = ${widthPx} px  |  L ${leftX}px  R ${rightX}px`;
+}
+lbPwSlider.addEventListener('input', () => { lbPwNum.value    = lbPwSlider.value; updateRuler(); });
+lbPwNum.addEventListener('input',    () => { lbPwSlider.value = lbPwNum.value;    updateRuler(); });
+lbPxEm.addEventListener('input', updateRuler);
+lbPwPxNum.addEventListener('input', updateRuler);
+lbBasePxNum.addEventListener('input', updateRuler);
+window.addEventListener('resize', updateRuler);
+updateRuler();
+
+// ── Fill from last translate ─────────────────────────────────────
+document.getElementById('lb-fill-btn').addEventListener('click', () => {
+  if (lastLatex) lbLatexIn.value = lastLatex;
+});
+
+// ── Break ────────────────────────────────────────────────────────
+async function doBreak() {
+  const latex = lbLatexIn.value.trim();
+  if (!latex) return;
+
+  const pageWidth  = parseFloat(lbPwNum.value)    || 40;
+  const indentStep = parseFloat(lbIndentNum.value) || 2;
+  const pageWidthPx = parseFloat(lbPwPxNum.value) || 0;
+  const baseFontSizePx = parseFloat(lbBasePxNum.value) || 16;
+  const maxDelimDepth = parseInt(lbDepthNum.value || '2', 10);
+  const maxIterations = parseInt(lbIterNum.value || '0', 10);
+  const compact = lbCompactChk.checked;
+  const pxEm       = parseFloat(lbPxEm.value)     || 16;
+
+  lbLatexOut.className   = 'lb-ph';
+  lbLatexOut.textContent = 'breaking…';
+  lbKatexInner.innerHTML = '<span style="color:var(--muted);font-size:.85rem">rendering…</span>';
+
+  try {
+    const r = await fetch('/api/linebreak', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        latex,
+        pageWidth,
+        pageWidthPx,
+        baseFontSizePx,
+        indentStep,
+        compact,
+        maxDelimDepth,
+        maxIterations,
+      }),
+    });
+    const { latex: broken, error: lbErr } = await r.json();
+
+    if (lbErr) {
+      lbLatexOut.className   = 'lb-ph';
+      lbLatexOut.textContent = '⚠ ' + lbErr;
+      lbKatexInner.innerHTML = '';
+      return;
+    }
+
+    // Show broken LaTeX source
+    lbLatexOut.className   = '';
+    lbLatexOut.textContent = broken;
+
+    // Render with KaTeX.  font-size = pxPerEm so the ruler calibration holds:
+    // the C++ em and the KaTeX "px per em" will match once the user dials in px/em.
+    lbKatexInner.innerHTML   = '';
+    lbKatexInner.style.fontSize = pxEm + 'px';
+    try {
+      window.katex.render(broken, lbKatexInner, {
+        displayMode: true,
+        throwOnError: false,
+        strict: false,
+        macros: { '\\dd': '\\mathrm{d}', '\\R': '\\mathbb{R}' },
+      });
+    } catch (e) {
+      lbKatexInner.innerHTML =
+        `<span style="color:var(--red);font-family:var(--font-mono);font-size:.82rem">KaTeX: ${escHtml(e.message)}</span>`;
+    }
+    updateRuler();
+  } catch (e) {
+    lbLatexOut.className   = 'lb-ph';
+    lbLatexOut.textContent = '⚠ Network error — is the server running? (node tester/server.js)';
+  }
+}
+
+document.getElementById('btn-break').addEventListener('click', doBreak);
+lbLatexIn.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doBreak(); }
 });
 </script>
 </body>
