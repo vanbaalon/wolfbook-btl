@@ -833,6 +833,9 @@ private:
                     std::string arg = translateToString(pr_.children[lStart + 2]);
                     if (isSingleSymbolLatex(arg)) {
                         result_ += cmd;
+                        // need a space separator when arg is a bare letter/name
+                        // (no backslash) to avoid e.g. \cost instead of \cos t
+                        if (!arg.empty() && arg[0] != '\\') result_ += ' ';
                         result_ += arg;
                         return;
                     }
@@ -1027,6 +1030,7 @@ private:
                             result_ += '^';
                             if (needsBraces(exp)) { result_ += '{'; result_ += exp; result_ += '}'; }
                             else                  { result_ += exp; }
+                            if (!argStr.empty() && argStr[0] != '\\') result_ += ' ';
                             result_ += argStr;
                             return;
                         }
