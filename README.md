@@ -71,9 +71,9 @@ The production fast path. Compiled to a Node.js native module via `node-gyp`. Al
 |------|---------|
 | `src/native/wl_parser.h/.cpp` | Recursive-descent parser for WL InputForm strings. Produces a flat arena-allocated AST (no per-node heap allocation). Handles strings (including `\[Named]` escapes), symbols, numbers, compound expressions `Head[…]`, lists `{…}`, and rules `lhs -> rhs`. |
 | `src/native/special_chars.h/.cpp` | `wlCharToLatex(token)` via `unordered_map` (O(1) avg). `isLargeOperator(latex)` via `unordered_set`. Covers all Greek, operators, arrows, blackboard-bold, spacing/invisible characters. |
-| `src/native/box_to_latex.h/.cpp` | `BoxTranslator` walks the AST by index (no virtual calls). Handles all box heads. `StyleBox` applies colour innermost → bold outermost. Delimiter detection in `RowBox` selects matrix environments. |
+| `src/native/box_to_latex.h/.cpp` | `BoxTranslator` walks the AST by index (no virtual calls). Handles all box heads. `StyleBox` applies colour innermost → bold outermost. Delimiter detection in `RowBox` selects matrix environments. Accepts a `BtlOptions` struct to enable/disable typographic rules (trig paren omission, trig power form). |
 | `src/native/line_breaker.h/.cpp` | Post-processing line-break layer. Takes a single-line LaTeX string and wraps it in `\begin{aligned}…\end{aligned}` when it exceeds a target `pageWidth`. Uses symbol classification (relations, binary operators, delimiters), delimiter-depth tracking, and a simplified Knuth-Plass DP to find optimal breakpoints. Inspired by the algorithm in the `breqn` LaTeX package (see [Credits](#credits)). |
-| `src/native/addon.cpp` | N-API wrapper. Exports two JS functions: `boxToLatex(str)` and `lineBreakLatex(latex, opts?)`. Zero DOM dependencies. |
+| `src/native/addon.cpp` | N-API wrapper. Exports two JS functions: `boxToLatex(str, opts?)` and `lineBreakLatex(latex, opts?)`. Zero DOM dependencies. |
 
 **Performance characteristics:**
 - Parse: single-pass, O(n) time, O(n) space in a flat arena
@@ -170,6 +170,33 @@ const broken = btl.lineBreakLatex(latex, {
 
 katex.render(broken, container, { displayMode: true });
 ```
+
+### Style options (`BtlOptions`)
+
+`boxToLatex` accepts an optional second argument to control typographic style rules.
+Both flags default to `true` (enabled). Set to `false` to revert to plain TeX output.
+
+```ts
+const { latex } = btl.boxToLatex(rawBoxes, {
+  trigOmitParens: true,   // \sin(\phi) → \sin\phi   (single-symbol arg only)
+  trigPowerForm:  true,   // (\sin\phi)^2 → \sin^2\phi
+});
+```
+
+| Flag | Default | `true` | `false` |
+|---|---|---|---|
+| `trigOmitParens` | `true` | `\sin\phi` | `\sin(\phi)` |
+| `trigPowerForm` | `true` | `\sin^2\phi` | `(\sin\phi)^2` |
+
+**Scope:** both rules apply to all standard trig/hyperbolic names (`sin`, `cos`, `tan`, `cot`, `sec`, `csc`, `arcsin`, `arccos`, `arctan`, `arccot`, `arcsec`, `arccsc`, `sinh`, `cosh`, `tanh`, `coth`, `arcsinh`, `arccosh`, `arctanh`), including their WL-capitalised variants (`Sin`, `Cos`, etc.).
+
+**`trigOmitParens`** fires only when the argument inside the parentheses is a single symbol (a single letter, a bare LaTeX command like `\phi`, or a single Unicode character). Multi-token arguments are left unchanged: `\sin(x+y)` stays as-is.
+
+**`trigPowerForm`** fires only when the base of a superscript is a parenthesised trig expression whose own argument is a single symbol. The pattern `(\sin\phi)^n` → `\sin^n\phi` is applied at the C++ AST level, so it handles all exponent forms reliably including multi-character powers like `^{2}` or `^{-1}`.
+
+These rules are also exposed as VS Code settings:
+- `wolfbook.notebook.rendering.trigOmitParens` (default: `true`)
+- `wolfbook.notebook.rendering.trigPowerForm` (default: `true`)
 
 **Break priority** (lower penalty = preferred):
 

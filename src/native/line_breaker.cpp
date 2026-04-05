@@ -786,7 +786,10 @@ static std::vector<Breakpoint> extractBreakpoints(
         double depthPenalty = 500.0 * dd;
 
         switch (bc) {
-            case BreakClass::Relation: penalty = -100.0 + depthPenalty; break;
+            // At depth 0 (top-level), relations (=, \to, …) are the preferred break
+            // point. Inside delimiters (depth > 0) prefer commas over relations so
+            // that list items like "lhs \to rhs" are not split at the arrow.
+            case BreakClass::Relation: penalty = (dd > 0 ? 50.0 : -100.0) + depthPenalty; break;
             case BreakClass::BinOp:    penalty =   50.0 + depthPenalty; break;
             case BreakClass::Comma:    penalty =   30.0 + depthPenalty; break;
             case BreakClass::Open:     penalty =  200.0 + depthPenalty; break;
@@ -957,26 +960,6 @@ static std::vector<size_t> appendTailRescueBreaks(
         breakIndices.push_back(static_cast<size_t>(best));
     }
 
-    // Secondary heuristic: if the tail ends with a very short addend like
-    // "+1" or "+x", peel it off when the preceding content is already a
-    // substantial final line. This improves cases where the estimator thinks
-    // the combined tail technically fits, but visually the tiny addend should
-    // clearly sit on its own continuation line.
-    size_t candidateStart = breakIndices.empty() ? 0 : (breakIndices.back() + 1);
-    if (candidateStart < bps.size()) {
-        size_t lastCandidate = bps.size() - 1;
-        if (lastCandidate >= candidateStart) {
-            double segmentStartWidth = breakIndices.empty()
-                ? 0.0
-                : bps[breakIndices.back()].cumWidth;
-            double firstWidth = bps[lastCandidate].cumWidth - segmentStartWidth;
-            double secondWidth = totalWidth - bps[lastCandidate].cumWidth;
-            if (firstWidth >= lineWidth * 0.75 && secondWidth > 0.0 && secondWidth <= lineWidth * 0.18) {
-                breakIndices.push_back(lastCandidate);
-            }
-        }
-    }
-
     return breakIndices;
 }
 
@@ -1016,6 +999,34 @@ static bool startsWithCloseDelimiterCmd(std::string_view s) {
     return false;
 }
 
+// Count net unmatched \left opens in a LaTeX string segment.
+// Returns positive when there are more \left than \right (opens left unclosed).
+// Returns negative when there are more \right than \left (closes from a prior segment).
+// Does NOT clamp at zero — callers use std::max(0, pendingOpens + delta).
+static int leftRightNetDepth(std::string_view s) {
+    int depth = 0;
+    for (size_t i = 0; i < s.size(); ) {
+        if (s[i] == '\\') {
+            // \left — 5 chars, must be followed by non-alpha (delimiter)
+            if (i + 5 <= s.size() && s.substr(i, 5) == "\\left" &&
+                (i + 5 == s.size() || !std::isalpha((unsigned char)s[i + 5]))) {
+                ++depth;
+                i += 5;
+                continue;
+            }
+            // \right — 6 chars, must be followed by non-alpha (delimiter)
+            if (i + 6 <= s.size() && s.substr(i, 6) == "\\right" &&
+                (i + 6 == s.size() || !std::isalpha((unsigned char)s[i + 6]))) {
+                --depth;
+                i += 6;
+                continue;
+            }
+        }
+        ++i;
+    }
+    return depth;
+}
+
 // Remove invalid line breaks that appear immediately before a closing delimiter.
 // Example fix: "... \\\n+//   \\right) ..."  -> "... \\right) ..."
 static void sanitizeBreaksBeforeClosers(std::string& latex) {
@@ -1049,6 +1060,7 @@ static std::string emitAligned(
     out += "\\begin{aligned}\n";
 
     size_t prevEnd = 0; // byte offset where previous line ended
+    int pendingOpens = 0; // unmatched \left opens carried from previous line
 
     for (size_t k = 0; k < breakIndices.size(); k++) {
         size_t bpIdx = breakIndices[k];
@@ -1065,23 +1077,15 @@ static std::string emitAligned(
         }
         std::string_view lineContent = trim(latex.substr(prevEnd, lineEnd - prevEnd));
 
-        if (k == 0) {
-            // First line: keep a leading alignment marker.
-            out += "  &";
-            out += lineContent;
-            out += " \\\\\n";
-        } else {
-            // Continuation lines: always keep a leading '&'.
-            if (bp.breakClass == BreakClass::Relation) {
-                out += "  &";
-                out += lineContent;
-                out += " \\\\\n";
-            } else {
-                out += "  &";
-                out += lineContent;
-                out += " \\\\\n";
-            }
-        }
+        out += "  &";
+        for (int i = 0; i < pendingOpens; i++) out += "\\left. ";
+        out += lineContent;
+        // Close any \left opens that are unmatched at this break point to
+        // avoid "missing \right" errors when \\ splits a \left...\right pair.
+        int lineDepth = std::max(0, pendingOpens + leftRightNetDepth(lineContent));
+        for (int i = 0; i < lineDepth; i++) out += " \\right.";
+        out += " \\\\\n";
+        pendingOpens = lineDepth;
 
         prevEnd = lineEnd;
     }
@@ -1089,21 +1093,8 @@ static std::string emitAligned(
     // Last segment: from the last break to end of string
     std::string_view lastLine = trim(latex.substr(prevEnd));
     if (!lastLine.empty()) {
-        // Check if it starts with a relation
-        bool startsWithRelation = false;
-        if (!breakIndices.empty()) {
-            size_t lastBpIdx = breakIndices.back();
-            const Breakpoint& lastBp = bps[lastBpIdx];
-            startsWithRelation = (lastBp.breakClass == BreakClass::Relation);
-        }
-
-        if (startsWithRelation) {
-            out += "  &";
-        } else if (!breakIndices.empty()) {
-            out += "  &";
-        } else {
-            out += "  &";
-        }
+        out += "  &";
+        for (int i = 0; i < pendingOpens; i++) out += "\\left. ";
         out += lastLine;
         out += "\n";
     }
@@ -1129,6 +1120,7 @@ static std::string emitAlignedAtRelation(
     size_t prevEnd = 0;
     bool firstLine = true;
     bool hasTopRelation = false;
+    int pendingOpens = 0; // unmatched \left opens carried from previous line
 
     // Check if any break is a top-level relation
     for (size_t k = 0; k < breakIndices.size(); k++) {
@@ -1150,24 +1142,15 @@ static std::string emitAlignedAtRelation(
         }
         std::string_view lineContent = trim(latex.substr(prevEnd, lineEnd - prevEnd));
 
-        if (firstLine) {
-            out += "  &";
-            out += lineContent;
-            out += " \\\\\n";
-            firstLine = false;
-        } else {
-            if (bp.breakClass == BreakClass::Relation && bp.delimDepth == 0 &&
-                hasTopRelation) {
-                // Align at relation
-                out += "  &";
-                out += lineContent;
-                out += " \\\\\n";
-            } else {
-                out += "  &";
-                out += lineContent;
-                out += " \\\\\n";
-            }
-        }
+        out += "  &";
+        for (int i = 0; i < pendingOpens; i++) out += "\\left. ";
+        out += lineContent;
+        // Close any \left opens that are unmatched at this break point.
+        int lineDepth = std::max(0, pendingOpens + leftRightNetDepth(lineContent));
+        for (int i = 0; i < lineDepth; i++) out += " \\right.";
+        out += " \\\\\n";
+        pendingOpens = lineDepth;
+        firstLine = false;
 
         prevEnd = lineEnd;
     }
@@ -1176,21 +1159,11 @@ static std::string emitAlignedAtRelation(
     std::string_view lastLine = trim(latex.substr(prevEnd));
     if (!lastLine.empty()) {
         if (!firstLine) {
-            // Check if last line starts at a relation break
-            if (!breakIndices.empty()) {
-                const Breakpoint& lastBp = bps[breakIndices.back()];
-                if (lastBp.breakClass == BreakClass::Relation &&
-                    lastBp.delimDepth == 0 && hasTopRelation) {
-                    out += "  &";
-                } else {
-                    out += "  &";
-                }
-            } else {
-                out += "  ";
-            }
+            out += "  &";
         } else {
             out += "  ";
         }
+        for (int i = 0; i < pendingOpens; i++) out += "\\left. ";
         out += lastLine;
         out += "\n";
     }
@@ -1212,6 +1185,8 @@ static std::string emitGathered(
     out += "\\begin{gathered}\n";
 
     size_t prevEnd = 0;
+    int pendingOpens = 0; // unmatched \left opens carried from previous line
+
     for (size_t k = 0; k < breakIndices.size(); k++) {
         size_t bpIdx = breakIndices[k];
         const Breakpoint& bp = bps[bpIdx];
@@ -1223,21 +1198,30 @@ static std::string emitGathered(
         }
         std::string_view lineContent = trim(latex.substr(prevEnd, lineEnd - prevEnd));
         out += "  ";
+        for (int i = 0; i < pendingOpens; i++) out += "\\left. ";
         out += lineContent;
+        // Close any \left opens that are unmatched at this break point.
+        int lineDepth = std::max(0, pendingOpens + leftRightNetDepth(lineContent));
+        for (int i = 0; i < lineDepth; i++) out += " \\right.";
         out += " \\\\\n";
+        pendingOpens = lineDepth;
         prevEnd = lineEnd;
     }
 
     std::string_view lastLine = trim(latex.substr(prevEnd));
     if (!lastLine.empty()) {
         out += "  ";
+        for (int i = 0; i < pendingOpens; i++) out += "\\left. ";
         out += lastLine;
         out += "\n";
     }
 
     out += "\\end{gathered}";
     sanitizeBreaksBeforeClosers(out);
-    return out;
+    // Wrap with gray scaling brackets so multi-line numerators are visually
+    // scoped.  \textcolor{gray}{\left[…\right]} keeps \left/\right matched
+    // inside one group; the inner \textcolor{black}{…} restores content colour.
+    return "\\textcolor{gray}{\\left[\\textcolor{black}{" + out + "}\\right]}";
 }
 
 // Break a sub-expression (e.g. a numerator) with 85% of the page budget.

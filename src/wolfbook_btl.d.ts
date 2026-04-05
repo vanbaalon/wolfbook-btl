@@ -30,6 +30,24 @@ export interface BoxToLatexResult {
 }
 
 /**
+ * Style options for `boxToLatex`.  All flags default to `true` (enabled).
+ * Pass as the optional second argument to turn individual rules off.
+ */
+export interface BtlOptions {
+  /**
+   * Rule 1 — omit parentheses around a single-symbol trig argument.
+   * `\sin(\phi)` → `\sin\phi`.  Default: `true`.
+   */
+  trigOmitParens?: boolean;
+  /**
+   * Rule 2 — move the exponent onto the trig command when the base is a
+   * parenthesised trig expression.
+   * `(\sin\phi)^2` → `\sin^2\phi`.  Default: `true`.
+   */
+  trigPowerForm?: boolean;
+}
+
+/**
  * Translate a Wolfram Language box-expression string
  * (as produced by `ToString[ToBoxes[expr, TraditionalForm], InputForm]`)
  * to a LaTeX string suitable for KaTeX.
@@ -47,9 +65,10 @@ export interface BoxToLatexResult {
  * ```
  *
  * @param wlBoxString  InputForm box string, e.g. `FractionBox["1","2"]`
+ * @param opts         Optional style flags (all default to enabled)
  * @returns `{ latex, error }` — `error` is `null` on success
  */
-export declare function boxToLatex(wlBoxString: string): BoxToLatexResult;
+export declare function boxToLatex(wlBoxString: string, opts?: BtlOptions): BoxToLatexResult;
 
 /** Options for the line-breaking post-processor. */
 export interface LineBreakOptions {

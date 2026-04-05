@@ -17,7 +17,7 @@ namespace {
 
 // ----------------------------------------------------------
 // JS binding:
-//   boxToLatex(wlString: string)
+//   boxToLatex(wlString: string, opts?: { trigOmitParens?: boolean, trigPowerForm?: boolean })
 //     => { latex: string; error: string | null }
 //
 // On success: { latex: "...", error: null }
@@ -27,7 +27,7 @@ Napi::Value JsBoxToLatex(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
 
     if (info.Length() < 1 || !info[0].IsString()) {
-        Napi::TypeError::New(env, "boxToLatex expects a single string argument")
+        Napi::TypeError::New(env, "boxToLatex expects a string as first argument")
             .ThrowAsJavaScriptException();
         return env.Null();
     }
@@ -35,8 +35,18 @@ Napi::Value JsBoxToLatex(const Napi::CallbackInfo& info) {
     // Decode the JS UTF-8 string into a std::string
     std::string input = info[0].As<Napi::String>().Utf8Value();
 
+    // Read optional style options from second argument
+    wolfbook::BtlOptions opts;
+    if (info.Length() >= 2 && info[1].IsObject()) {
+        Napi::Object jsOpts = info[1].As<Napi::Object>();
+        if (jsOpts.Has("trigOmitParens"))
+            opts.trigOmitParens = jsOpts.Get("trigOmitParens").As<Napi::Boolean>().Value();
+        if (jsOpts.Has("trigPowerForm"))
+            opts.trigPowerForm = jsOpts.Get("trigPowerForm").As<Napi::Boolean>().Value();
+    }
+
     // Call the C++ translator — never throws (catches internally)
-    wolfbook::BoxResult result = wolfbook::boxToLatex(input);
+    wolfbook::BoxResult result = wolfbook::boxToLatex(input, opts);
 
     // Build result object: { latex, error }
     Napi::Object obj = Napi::Object::New(env);

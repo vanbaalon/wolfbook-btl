@@ -25,12 +25,23 @@ struct BoxResult {
     std::string error;  // empty string means no error
 };
 
+// Style options for boxToLatex — all default to enabled.
+// Pass from JS as the second argument to boxToLatex():
+//   boxToLatex(wlString, { trigOmitParens: false, trigPowerForm: false })
+struct BtlOptions {
+    // Rule 1: \sin(\phi) → \sin\phi  (omit parens when arg is a single symbol)
+    bool trigOmitParens = true;
+    // Rule 2: (\sin\phi)^n → \sin^n\phi  (move exponent onto trig command)
+    bool trigPowerForm  = true;
+};
+
 // Translate a Wolfram Language box-expression string (as produced
 // by  ToString[ToBoxes[expr, TraditionalForm], InputForm]  on the
 // Mathematica kernel) to a LaTeX string suitable for KaTeX.
 //
 // Never throws on bad input — returns a best-effort string.
 // Diagnostic messages go to stderr AND are available in result.error.
-BoxResult boxToLatex(std::string_view wlBoxString);
+BoxResult boxToLatex(std::string_view wlBoxString,
+                     const BtlOptions& opts = BtlOptions{});
 
 } // namespace wolfbook

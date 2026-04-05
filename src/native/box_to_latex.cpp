@@ -35,6 +35,65 @@ namespace wolfbook {
 namespace {
 
 // ----------------------------------------------------------
+// Trig style helpers (for BtlOptions rules)
+// ----------------------------------------------------------
+
+// Returns the LaTeX operator name for a WL or lowercase trig string,
+// or an empty string_view if the name is not a recognised trig function.
+static std::string_view getTrigLatex(std::string_view s) {
+    using sv = std::string_view;
+    static const std::pair<sv,sv> kTrig[] = {
+        // lowercase (plain TraditionalForm output)
+        {"sin","\\sin"},{"cos","\\cos"},{"tan","\\tan"},
+        {"cot","\\cot"},{"sec","\\sec"},{"csc","\\csc"},
+        {"arcsin","\\arcsin"},{"arccos","\\arccos"},{"arctan","\\arctan"},
+        {"arccot","\\operatorname{arccot}"},{"arcsec","\\operatorname{arcsec}"},
+        {"arccsc","\\operatorname{arccsc}"},
+        {"sinh","\\sinh"},{"cosh","\\cosh"},{"tanh","\\tanh"},{"coth","\\coth"},
+        {"arcsinh","\\operatorname{arcsinh}"},{"arccosh","\\operatorname{arccosh}"},
+        {"arctanh","\\operatorname{arctanh}"},
+        // WL capitalised (StandardForm / InputForm function names)
+        {"Sin","\\sin"},{"Cos","\\cos"},{"Tan","\\tan"},
+        {"Cot","\\cot"},{"Sec","\\sec"},{"Csc","\\csc"},
+        {"ArcSin","\\arcsin"},{"ArcCos","\\arccos"},{"ArcTan","\\arctan"},
+        {"ArcCot","\\operatorname{arccot}"},{"ArcSec","\\operatorname{arcsec}"},
+        {"ArcCsc","\\operatorname{arccsc}"},
+        {"Sinh","\\sinh"},{"Cosh","\\cosh"},{"Tanh","\\tanh"},{"Coth","\\coth"},
+        {"ArcSinh","\\operatorname{arcsinh}"},{"ArcCosh","\\operatorname{arccosh}"},
+        {"ArcTanh","\\operatorname{arctanh}"},
+    };
+    for (auto& [k, v] : kTrig)
+        if (k == s) return v;
+    return {};
+}
+
+// Returns true when the translated LaTeX string represents a single symbol:
+//   • a single ASCII letter (e.g. "x")
+//   • a bare LaTeX command with no arguments (e.g. "\phi ", "\alpha")
+//   • a single multi-byte UTF-8 codepoint (e.g. "φ" encoded as 2–4 bytes)
+static bool isSingleSymbolLatex(const std::string& s) {
+    if (s.empty()) return false;
+    // Single ASCII letter
+    if (s.size() == 1) return std::isalpha(static_cast<unsigned char>(s[0])) != 0;
+    // Bare LaTeX command: \alpha, \phi, \sigma, etc.
+    // Pattern: \ [a-zA-Z]+ optionally followed by one trailing guard space
+    if (s[0] == '\\') {
+        size_t i = 1;
+        while (i < s.size() && std::isalpha(static_cast<unsigned char>(s[i]))) ++i;
+        if (i == s.size()) return true;
+        if (i == s.size() - 1 && s[i] == ' ') return true;
+        return false;
+    }
+    // Single multi-byte UTF-8 codepoint (no backslash, no braces)
+    auto b = static_cast<unsigned char>(s[0]);
+    size_t byteLen = (b & 0xE0) == 0xC0 ? 2 :
+                     (b & 0xF0) == 0xE0 ? 3 :
+                     (b & 0xF8) == 0xF0 ? 4 : 0;
+    if (byteLen != 0 && byteLen == s.size()) return true;
+    return false;
+}
+
+// ----------------------------------------------------------
 // Color helpers — RGBColor[r,g,b] → "#rrggbb"
 // ----------------------------------------------------------
 static char hexChar(int v) {
@@ -150,7 +209,8 @@ static TokenClass classifyToken(std::string_view s) {
 // ----------------------------------------------------------
 class BoxTranslator {
 public:
-    explicit BoxTranslator(const ParseResult& pr) : pr_(pr) {}
+    explicit BoxTranslator(const ParseResult& pr, const BtlOptions& opts = BtlOptions{})
+        : pr_(pr), opts_(opts) {}
 
     std::string run() {
         // Heuristic: LaTeX output is roughly proportional to string pool size.
@@ -164,6 +224,7 @@ public:
 
 private:
     const ParseResult& pr_;
+    BtlOptions         opts_;
     std::string        result_;
 
     // ---- main dispatch ----
@@ -448,6 +509,8 @@ private:
         if (stripped == ":>")  { result_ += "\\mapsto "; return; }
         if (stripped == "|->") { result_ += "\\mapsto "; return; } // Function[{x},body] mapsto arrow
         if (stripped == "&")   { result_ += "\\& ";      return; } // pure-function ampersand
+        // Big-O order symbol (appears in SeriesData output as the bare string "O")
+        if (stripped == "O")   { result_ += "\\mathcal{O}"; return; }
         // WL relational operators that map to single LaTeX symbols
         if (stripped == "==")  { result_ += '=';         return; }
         if (stripped == "!=")  { result_ += "\\neq ";    return; }
@@ -459,6 +522,25 @@ private:
         if (!stripped.empty() && stripped[0] == '#') {
             result_ += "\\# ";
             result_ += stripped.substr(1);  // trailing digit(s) or empty
+            return;
+        }
+        // WL system variable names starting with '$' (e.g. $Aborted, $Failed,
+        // $Version).  Must be wrapped in \text{\$...} — `$` is a math delimiter
+        // and cannot appear bare or inside \mathrm{} in KaTeX/LaTeX math mode.
+        if (!stripped.empty() && stripped[0] == '$') {
+            result_ += "\\text{\\$";
+            for (size_t i = 1; i < stripped.size(); ++i) {
+                char c = stripped[i];
+                if      (c == '_') result_ += "\\_";
+                else if (c == '^') result_ += "\\^{}";
+                else if (c == '%') result_ += "\\%";
+                else if (c == '&') result_ += "\\&";
+                else if (c == '#') result_ += "\\#";
+                else if (c == '{') result_ += "\\{";
+                else if (c == '}') result_ += "\\}";
+                else               result_ += c;
+            }
+            result_ += '}';
             return;
         }
         // Otherwise classify the (possibly stripped) plain string
@@ -618,6 +700,32 @@ private:
 
     // ---- RowBox[{e1, e2, …}] ----
     // The single argument is always a List node.
+    // ---- Trig style helper: tryExtractTrigCall ----
+    // Checks if a node is RowBox[{trig, "(", singleSymbol, ")"}].
+    // On success fills trigCmd (e.g. "\\sin") and argStr (translated arg)
+    // and returns true.  Does not modify result_.
+    bool tryExtractTrigCall(uint32_t nodeIdx, std::string& trigCmd, std::string& argStr) {
+        const Node& node = pr_.node(nodeIdx);
+        if (!node.isExpr()) return false;
+        if (pr_.headName(node) != "RowBox") return false;
+        if (node.childrenCount < 2) return false;
+        const Node& listNode = pr_.node(pr_.children[node.childrenStart + 1]);
+        if (listNode.kind != NodeKind::List || listNode.childrenCount != 4) return false;
+        const Node& n0 = pr_.node(pr_.children[listNode.childrenStart]);      // trig name
+        const Node& n1 = pr_.node(pr_.children[listNode.childrenStart + 1]);  // "("
+        const Node& n3 = pr_.node(pr_.children[listNode.childrenStart + 3]);  // ")"
+        if (!(n0.isString() || n0.isSymbol())) return false;
+        if (!(n1.isString() && pr_.str(n1) == "(")) return false;
+        if (!(n3.isString() && pr_.str(n3) == ")")) return false;
+        std::string_view cmd = getTrigLatex(pr_.str(n0));
+        if (cmd.empty()) return false;
+        std::string arg = translateToString(pr_.children[listNode.childrenStart + 2]);
+        if (!isSingleSymbolLatex(arg)) return false;
+        trigCmd = std::string(cmd);
+        argStr  = std::move(arg);
+        return true;
+    }
+
     void translateRowBox(uint32_t argStart, uint32_t argCount) {
         if (argCount == 0) return;
         // The sole argument should be a List
@@ -704,6 +812,52 @@ private:
                 if (!lOpen.empty()) {
                     result_ += lOpen;
                     for (uint32_t i = 1; i < nElems - 1; ++i)
+                        translate(pr_.children[lStart + i]);
+                    result_ += lClose;
+                    return;
+                }
+            }
+        }
+
+        // Rule 1 (trigOmitParens): RowBox[{trig, "(", singleSymbol, ")"}]
+        // → \trig symbol  (no outer parens)
+        if (opts_.trigOmitParens && nElems == 4) {
+            const Node& rn0 = pr_.node(pr_.children[lStart]);
+            const Node& rn1 = pr_.node(pr_.children[lStart + 1]);
+            const Node& rn3 = pr_.node(pr_.children[lStart + 3]);
+            if ((rn0.isString() || rn0.isSymbol()) &&
+                (rn1.isString() && pr_.str(rn1) == "(") &&
+                (rn3.isString() && pr_.str(rn3) == ")")) {
+                std::string_view cmd = getTrigLatex(pr_.str(rn0));
+                if (!cmd.empty()) {
+                    std::string arg = translateToString(pr_.children[lStart + 2]);
+                    if (isSingleSymbolLatex(arg)) {
+                        result_ += cmd;
+                        result_ += arg;
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Function-call style: RowBox[{head, "(", args..., ")"}]
+        // The wrapping-delimiter check above only fires when the FIRST element
+        // is itself an open delimiter.  Here we catch cases where an operator
+        // or function name precedes the opening paren, e.g.:
+        //   O(\frac{1}{x})  →  O\left(\frac{1}{x}\right)
+        //   am(σ|\frac{…})  →  \mathrm{am}\left(σ|\frac{…}\right)
+        //   csc^2(χ)        →  \csc^2\left(\chi\right)
+        // This ensures tall content (fractions, nested \left\right) auto-sizes
+        // the outer delimiters correctly.
+        if (nElems >= 3) {
+            const Node& snd  = pr_.node(pr_.children[lStart + 1]);
+            const Node& llst = pr_.node(pr_.children[lStart + nElems - 1]);
+            if ((snd.isString() || snd.isSymbol()) && (llst.isString() || llst.isSymbol())) {
+                auto [lOpen, lClose] = delimToLeftRight(pr_.str(snd), pr_.str(llst));
+                if (!lOpen.empty()) {
+                    translate(pr_.children[lStart]);          // head / name
+                    result_ += lOpen;
+                    for (uint32_t i = 2; i + 1 < nElems; ++i)
                         translate(pr_.children[lStart + i]);
                     result_ += lClose;
                     return;
@@ -851,6 +1005,34 @@ private:
             for (int i = 0; i < primeCount; ++i)
                 result_ += '\'';
             return;
+        }
+
+        // Rule 2 (trigPowerForm): SuperscriptBox[RowBox[{"(", trigCall, ")"}], exp]
+        // → \trig^{exp} symbol   where trigCall = RowBox[{trig,"(",sym,")"}]
+        if (opts_.trigPowerForm) {
+            const Node& baseNode = pr_.node(pr_.children[a]);
+            if (baseNode.isExpr() && pr_.headName(baseNode) == "RowBox" &&
+                baseNode.childrenCount >= 2) {
+                const Node& listNode = pr_.node(pr_.children[baseNode.childrenStart + 1]);
+                if (listNode.kind == NodeKind::List && listNode.childrenCount == 3) {
+                    const Node& first = pr_.node(pr_.children[listNode.childrenStart]);
+                    const Node& last  = pr_.node(pr_.children[listNode.childrenStart + 2]);
+                    if ((first.isString() || first.isSymbol()) && pr_.str(first) == "(" &&
+                        (last.isString()  || last.isSymbol())  && pr_.str(last)  == ")") {
+                        std::string trigCmd, argStr;
+                        if (tryExtractTrigCall(pr_.children[listNode.childrenStart + 1],
+                                               trigCmd, argStr)) {
+                            std::string exp = translateToString(pr_.children[a + 1]);
+                            result_ += trigCmd;
+                            result_ += '^';
+                            if (needsBraces(exp)) { result_ += '{'; result_ += exp; result_ += '}'; }
+                            else                  { result_ += exp; }
+                            result_ += argStr;
+                            return;
+                        }
+                    }
+                }
+            }
         }
 
         std::string base = translateToString(pr_.children[a]);
@@ -1908,7 +2090,7 @@ private:
 // ----------------------------------------------------------
 // Public entry point
 // ----------------------------------------------------------
-BoxResult boxToLatex(std::string_view wlBoxString) {
+BoxResult boxToLatex(std::string_view wlBoxString, const BtlOptions& opts) {
     // Thread-local buffers: retain heap capacity across calls so the
     // allocator is only invoked on the first call per thread.
     thread_local std::string  tl_clean;
@@ -1946,7 +2128,7 @@ BoxResult boxToLatex(std::string_view wlBoxString) {
         }
         tl_pr.reset();
         WLParser{}.parseInto(tl_clean, tl_pr);
-        return { BoxTranslator(tl_pr).run(), "" };
+        return { BoxTranslator(tl_pr, opts).run(), "" };
     } catch (const std::exception& ex) {
         std::string msg = ex.what();
         std::fprintf(stderr, "[wolfbook] boxToLatex parse error: %s\n", msg.c_str());
