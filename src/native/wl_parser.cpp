@@ -140,6 +140,38 @@ uint32_t WLParser::parseExpr() {
         throw std::runtime_error(oss.str());
     }
 
+    // Infix ^ — build Power[base, exp]  (e.g. GoldenRatio^(-1) in InformationData options)
+    skipWhitespace();
+    if (peek() == '^') {
+        advance(); // consume '^'
+        skipWhitespace();
+        bool hasParen = (peek() == '(');
+        if (hasParen) { advance(); skipWhitespace(); }
+        const size_t savedNodes    = out_->nodes.size();
+        const size_t savedChildren = out_->children.size();
+        const size_t savedStrings  = out_->strings.size();
+        const size_t savedPos      = pos_;
+        try {
+            uint32_t expIdx = parseExpr();
+            if (hasParen) { skipWhitespace(); if (peek() == ')') advance(); }
+            Node headN;
+            headN.kind     = NodeKind::Symbol;
+            headN.strIndex = internString("Power");
+            uint32_t headIdx = allocNode(headN);
+            std::vector<uint32_t> ch = {headIdx, lhs, expIdx};
+            Node powerN;
+            powerN.kind          = NodeKind::Expr;
+            powerN.childrenStart = appendChildren(ch);
+            powerN.childrenCount = static_cast<uint32_t>(ch.size());
+            lhs = allocNode(powerN);
+        } catch (...) {
+            out_->nodes.resize(savedNodes);
+            out_->children.resize(savedChildren);
+            out_->strings.resize(savedStrings);
+            pos_ = savedPos;
+        }
+    }
+
     // Check for rule arrow -> or :>
     lhs = maybeParseRule(lhs);
     return lhs;

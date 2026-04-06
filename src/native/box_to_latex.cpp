@@ -1604,6 +1604,42 @@ private:
         result_ += "\\}";
     }
 
+    // Render a single option value: symbols/strings as \text{}, lists as \{…\},
+    // numbers as numerals, and Power[x,-1] as \frac{1}{x}.
+    void renderInfoOptValue(uint32_t idx) {
+        const Node& n = pr_.node(idx);
+        if (n.isSymbol() || n.isString()) {
+            infoTextAtom(pr_.str(n));
+        } else if (n.kind == NodeKind::Integer) {
+            result_ += std::to_string(n.iVal);
+        } else if (n.kind == NodeKind::Real) {
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "%g", n.dVal);
+            result_ += buf;
+        } else if (n.isList()) {
+            result_ += "\\{";
+            for (uint32_t i = 0; i < n.childrenCount; ++i) {
+                if (i > 0) result_ += "\\text{,}\\,";
+                renderInfoOptValue(pr_.children[n.childrenStart + i]);
+            }
+            result_ += "\\}";
+        } else if (n.isExpr()) {
+            // Power[base, -1] → \frac{1}{\text{base}}
+            if (pr_.headName(n) == "Power" && n.childrenCount == 3) {
+                const Node& base = pr_.node(pr_.children[n.childrenStart + 1]);
+                const Node& exp  = pr_.node(pr_.children[n.childrenStart + 2]);
+                if (exp.kind == NodeKind::Integer && exp.iVal == -1 &&
+                    (base.isSymbol() || base.isString())) {
+                    result_ += "\\frac{1}{";
+                    infoTextAtom(pr_.str(base));
+                    result_ += "}";
+                    return;
+                }
+            }
+            translate(idx);  // fallback for other Expr types
+        }
+    }
+
     // Render Options list: {Opt1 -> val1, Opt2 :> val2, …}
     void renderInfoOptions(uint32_t listIdx) {
         const Node& list = pr_.node(listIdx);
@@ -1616,14 +1652,9 @@ private:
             if (!first) result_ += "\\text{, }";
             first = false;
             const Node& lhs = pr_.node(pr_.children[opt.childrenStart]);
-            const Node& rhs = pr_.node(pr_.children[opt.childrenStart + 1]);
             infoTextAtom(pr_.str(lhs));
             result_ += (opt.kind == NodeKind::RuleDelayed) ? "\\mapsto " : "\\to ";
-            if (rhs.isSymbol() || rhs.isString()) {
-                infoTextAtom(pr_.str(rhs));
-            } else {
-                translate(pr_.children[opt.childrenStart + 1]);
-            }
+            renderInfoOptValue(pr_.children[opt.childrenStart + 1]);
         }
     }
 

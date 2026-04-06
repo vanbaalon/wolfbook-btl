@@ -1,0 +1,159 @@
+# wolfbook-btl test cases
+# Format:
+#   # comment / label
+#   IN: <raw WL box expression>
+#   EX: <expected LaTeX>
+#   (blank line separates cases)
+# Lines starting with # are comments, blank lines are ignored between cases.
+
+# ── Basic boxes ───────────────────────────────────────────────────
+
+# Fraction
+IN: FractionBox["1","2"]
+EX: \frac{1}{2}
+
+# Square root
+IN: SqrtBox["x"]
+EX: \sqrt{x}
+
+# Radical
+IN: RadicalBox["x","3"]
+EX: \sqrt[3]{x}
+
+# Superscript
+IN: SuperscriptBox["x","2"]
+EX: x^2
+
+# Subscript
+IN: SubscriptBox["x","i"]
+EX: x_i
+
+# SubSuperscript
+IN: SubsuperscriptBox["x","i","2"]
+EX: x_i^2
+
+# Row
+IN: RowBox[{"x","+","y"}]
+EX: x+y
+
+# ── Greek chars ───────────────────────────────────────────────────
+
+IN: "\[Alpha]"
+EX: \alpha
+
+IN: "\[Infinity]"
+EX: \infty
+
+IN: "\[Pi]"
+EX: \pi
+
+IN: "\[Phi]"
+EX: \phi
+
+IN: "\[Element]"
+EX: \in
+
+# ── Delimiters / wrapping ──────────────────────────────────────────
+
+# Paren around fraction — should auto-size
+IN: RowBox[{"(",FractionBox["1","2"],")"}]
+EX: \left(\frac{1}{2}\right)
+
+# Curly braces — set literal
+IN: RowBox[{"{","x",",","y","}"}]
+EX: \left\{x,y\right\}
+
+# ── Matrix ─────────────────────────────────────────────────────────
+
+# 2×2 pmatrix
+IN: RowBox[{"(",GridBox[{{"a","b"},{"c","d"}}],")"}]
+EX: \begin{pmatrix}a & b\\c & d\end{pmatrix}
+
+# ── StyleBox ───────────────────────────────────────────────────────
+
+# Bold
+IN: StyleBox["f",FontWeight->"Bold"]
+EX: \mathbf{f}
+
+# Italic TI (argument style)
+IN: StyleBox["f","TI"]
+EX: \mathit{f}
+
+# Color
+IN: StyleBox["x",FontColor->RGBColor[0.4,0.85,0.33]]
+EX: \textcolor{#66d954}{x}
+
+# ── Subscript with styled atoms ────────────────────────────────────
+
+IN: SubscriptBox[StyleBox["x","TI"],StyleBox["min","TI"]]
+EX: \mathit{x}_{\mathit{min}}
+
+# ── FractionBox with expressions ──────────────────────────────────
+
+IN: FractionBox[RowBox[{"x","+","1"}],RowBox[{"x","-","1"}]]
+EX: \frac{x+1}{x-1}
+
+# ── Sum / Product with limits ──────────────────────────────────────
+
+IN: UnderoverscriptBox["\[Sum]",RowBox[{"n","=","1"}],"\[Infinity]"]
+EX: \sum _{n=1}^{\infty }
+
+# ── Post-processing / double-script fixes ─────────────────────────
+
+IN: SuperscriptBox[SuperscriptBox["f","1"],"2"]
+EX: {f^1}^2
+
+IN: SubscriptBox[SubscriptBox["x","i"],"j"]
+EX: {x_i}_j
+
+IN: SubsuperscriptBox[SuperscriptBox["f","a"],"i","n"]
+EX: {f^a}_i^n
+
+# ── Trig — trigOmitParens (default on) ────────────────────────────
+
+# Single letter arg: space must be inserted (\sin t not \sint)
+IN: RowBox[{"sin","(","t",")"}]
+EX: \sin t
+
+IN: RowBox[{"cos","(","t",")"}]
+EX: \cos t
+
+# Greek arg: no space (backslash cmd follows backslash cmd fine)
+IN: RowBox[{"cos","(","\[Phi]",")"}]
+EX: \cos\phi
+
+IN: RowBox[{"sinh","(","\[Rho]",")"}]
+EX: \sinh\rho
+
+# Multi-symbol arg: parens NOT omitted (falls through to normal path)
+IN: RowBox[{"sin","(",RowBox[{"x","+","1"}],")"}]
+EX: \sin\left(x+1\right)
+
+# trigOmitParens disabled via opts: parens kept
+IN: RowBox[{"sin","(","t",")"}] | {"trigOmitParens": false}
+EX: \sin\left(t\right)
+
+# ── Trig — trigPowerForm (default on) ─────────────────────────────
+
+# Power form with single letter
+IN: SuperscriptBox[RowBox[{"(",RowBox[{"sin","(","t",")"}],")"}],"2"]
+EX: \sin^2 t
+
+# Power form with Greek
+IN: SuperscriptBox[RowBox[{"(",RowBox[{"cos","(","\[Phi]",")"}],")"}],"2"]
+EX: \cos^2\phi
+
+# trigPowerForm disabled
+IN: SuperscriptBox[RowBox[{"(",RowBox[{"sin","(","t",")"}],")"}],"2"] | {"trigPowerForm": false}
+EX: \left(\sin t\right)^2
+
+# ── Matrix from btl.log ────────────────────────────────────────────
+
+# 2×2 with trig entries (full matrix from sinh/cosh example)
+IN: RowBox[{"(","\[NoBreak]",GridBox[{{RowBox[{"sinh","(","\[Rho]",")"}]},{RowBox[{"cosh","(","\[Rho]",")"}]}},{RowSpacings->1,ColumnSpacings->1}],"  \[NoBreak]",")"}]
+EX:  \left(\begin{matrix}\sinh\rho \\\cosh\rho \end{matrix}  \right)
+
+# ── Series / Big-O ─────────────────────────────────────────────────
+
+IN: InterpretationBox[RowBox[{FractionBox["1","x"],"+",InterpretationBox[RowBox[{"O","(",SuperscriptBox[RowBox[{"(",FractionBox["1","x"],")"}],"2"],")"}],SeriesData[x,Infinity,{},2,2,1],Editable->False]}],SeriesData[x,Infinity,{1},1,2,1],Editable->False]
+EX: \frac{1}{x}+\mathcal{O}\left(\left(\frac{1}{x}\right)^2\right)

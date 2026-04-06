@@ -72,46 +72,7 @@ build_ts() {
 
 smoke_test() {
   step "Smoke-testing native addon"
-  node - <<'EOF'
-const addon = require('./build/Release/wolfbook_btl.node');
-
-const cases = [
-  ['FractionBox["1","2"]',                   '\\frac{1}{2}'],
-  ['SqrtBox["x"]',                           '\\sqrt{x}'],
-  ['SuperscriptBox["x","2"]',                'x^2'],
-  ['SubscriptBox["x","i"]',                  'x_i'],
-  ['RowBox[{"x","+","y"}]',                  'x+y'],
-  ['UnderoverscriptBox["\\\\[Sum]",RowBox[{"n","=","1"}],"\\\\[Infinity]"]',
-                                             '\\sum _{n=1}^{\\infty }'],
-  ['"\\\\[Alpha]"',                          '\\alpha'],
-  ['"\\\\[Infinity]"',                       '\\infty'],
-  // Post-processing / double-script fixes
-  ['SuperscriptBox[SuperscriptBox["f","1"],"2"]',          '{f^1}^2'],
-  ['SubscriptBox[SubscriptBox["x","i"],"j"]',              '{x_i}_j'],
-  ['SubsuperscriptBox[SuperscriptBox["f","a"],"i","n"]',   '{f^a}_i^n'],
-];
-
-let passed = 0, failed = 0;
-for (const [input, expected] of cases) {
-  const result = addon.boxToLatex(input);
-  const latex  = result.latex;   // result is { latex, error }
-  if (result.error) {
-    console.error(`  FAIL  ${input.slice(0,50)}`);
-    console.error(`        error: ${result.error}`);
-    failed++;
-  } else if (latex === expected) {
-    console.log(`  PASS  ${input.slice(0,50)}`);
-    passed++;
-  } else {
-    console.error(`  FAIL  ${input.slice(0,50)}`);
-    console.error(`        got:      ${latex}`);
-    console.error(`        expected: ${expected}`);
-    failed++;
-  }
-}
-console.log(`\n${passed} passed / ${failed} failed`);
-process.exit(failed > 0 ? 1 : 0);
-EOF
+  node tester/run_tests.js
   ok "smoke tests passed"
 }
 

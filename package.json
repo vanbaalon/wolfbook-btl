@@ -1,6 +1,6 @@
 {
   "name": "wolfbook",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "Mathematica notebook functionality inside VSCode \u2014 fast box\u2192LaTeX renderer",
   "main": "out/extension.js",
   "license": "MIT",
@@ -11,6 +11,7 @@
     "rebuild": "./build.sh rebuild",
     "clean": "./build.sh clean",
     "smoke": "./build.sh smoke",
+    "test": "node tester/run_tests.js",
     "test:wl": "./build.sh test",
     "watch": "tsc -p tsconfig.json --watch",
     "tester": "node tester/server.js"
