@@ -24,3 +24,4 @@ _test_*.js
 
 # --- Logs ---
 *.log
+src/native/build_version.h

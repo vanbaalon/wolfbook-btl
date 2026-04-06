@@ -52,6 +52,13 @@ check_npm_deps() {
 build_native() {
   local mode="${1:-incremental}"   # incremental | rebuild
   step "Building C++ native addon (mode=$mode)"
+  # Inject version from package.json as a compiler define
+  local BTL_VER
+  BTL_VER=$(node -e "process.stdout.write(require('./package.json').version)")
+  # Write a generated header so node-gyp picks up the version string safely
+  # (passing it via CXXFLAGS/-D strips the surrounding quotes on some toolchains)
+  printf '#pragma once\n#define WOLFBOOK_BTL_VERSION "%s"\n' "$BTL_VER" \
+      > src/native/build_version.h
   if [ "$mode" = "rebuild" ]; then
     node_modules/.bin/node-gyp rebuild 2>&1 | grep -v '^gyp info' | sed 's/^/  /'
   else

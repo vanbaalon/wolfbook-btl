@@ -12,6 +12,9 @@
 #include <napi.h>
 #include "box_to_latex.h"
 #include "line_breaker.h"
+#if __has_include("build_version.h")
+#  include "build_version.h"
+#endif
 
 namespace {
 
@@ -108,6 +111,10 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set(
         Napi::String::New(env, "lineBreakLatex"),
         Napi::Function::New(env, JsLineBreakLatex, "lineBreakLatex"));
+#ifndef WOLFBOOK_BTL_VERSION
+#  define WOLFBOOK_BTL_VERSION "dev"
+#endif
+    exports.Set("version", Napi::String::New(env, WOLFBOOK_BTL_VERSION));
     return exports;
 }
 
