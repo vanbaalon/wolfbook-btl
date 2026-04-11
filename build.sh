@@ -57,7 +57,9 @@ build_native() {
   BTL_VER=$(node -e "process.stdout.write(require('./package.json').version)")
   # Write a generated header so node-gyp picks up the version string safely
   # (passing it via CXXFLAGS/-D strips the surrounding quotes on some toolchains)
-  printf '#pragma once\n#define WOLFBOOK_BTL_VERSION "%s"\n' "$BTL_VER" \
+  local BTL_DATE
+  BTL_DATE=$(date -u '+%Y-%m-%d')
+  printf '#pragma once\n#define WOLFBOOK_BTL_VERSION "%s"\n#define WOLFBOOK_BTL_BUILD_DATE "%s"\n' "$BTL_VER" "$BTL_DATE" \
       > src/native/build_version.h
   if [ "$mode" = "rebuild" ]; then
     node_modules/.bin/node-gyp rebuild 2>&1 | grep -v '^gyp info' | sed 's/^/  /'

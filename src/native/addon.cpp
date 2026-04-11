@@ -114,7 +114,11 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
 #ifndef WOLFBOOK_BTL_VERSION
 #  define WOLFBOOK_BTL_VERSION "dev"
 #endif
-    exports.Set("version", Napi::String::New(env, WOLFBOOK_BTL_VERSION));
+#ifndef WOLFBOOK_BTL_BUILD_DATE
+#  define WOLFBOOK_BTL_BUILD_DATE "unknown"
+#endif
+    exports.Set("version",   Napi::String::New(env, WOLFBOOK_BTL_VERSION));
+    exports.Set("buildDate", Napi::String::New(env, WOLFBOOK_BTL_BUILD_DATE));
     return exports;
 }
 
