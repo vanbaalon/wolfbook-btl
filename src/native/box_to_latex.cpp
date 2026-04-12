@@ -212,20 +212,27 @@ public:
     explicit BoxTranslator(const ParseResult& pr, const BtlOptions& opts = BtlOptions{})
         : pr_(pr), opts_(opts) {}
 
-    std::string run() {
+    BoxResult run() {
         // Heuristic: LaTeX output is roughly proportional to string pool size.
         // Reserve early to avoid mid-flight reallocations.
         result_.reserve(std::max<size_t>(512,
             pr_.strings.size() * 8 + pr_.nodes.size() * 4));
         translate(pr_.root);
         postProcess();
-        return std::move(result_);
+        BoxResult r;
+        r.latex = std::move(result_);
+        r.pages = std::move(pages_);
+        // When paging produced multiple pages, latex already holds the first page
+        // (written there by translateGridBox).  Nothing more to do.
+        return r;
     }
 
 private:
     const ParseResult& pr_;
     BtlOptions         opts_;
     std::string        result_;
+    std::vector<std::string> pages_;      // populated when paging is triggered
+    int                gridBoxDepth_ = 0; // nesting depth of translateGridBox calls
 
     // ---- main dispatch ----
     void translate(uint32_t idx) {
@@ -1766,7 +1773,7 @@ private:
             try {
                 ParseResult innerPr;
                 WLParser{}.parseInto(boxExpr, innerPr);
-                result_ += BoxTranslator(innerPr).run();
+                result_ += BoxTranslator(innerPr, opts_).run().latex;
             } catch (...) {
                 result_ += "\\cdots";
             }
@@ -1959,12 +1966,26 @@ private:
     }
 
     // ================================================================
+    // ── Helper: translate one row of a GridBox into `result_` ──────────────────
+    void translateGridRow(const Node& rowsNode, uint32_t r) {
+        const Node& rowNode = pr_.node(pr_.children[rowsNode.childrenStart + r]);
+        if (!rowNode.isList()) { translate(pr_.children[rowsNode.childrenStart + r]); return; }
+        uint32_t cellCount = rowNode.childrenCount;
+        for (uint32_t c = 0; c < cellCount; ++c) {
+            if (c > 0) result_ += " & ";
+            translate(pr_.children[rowNode.childrenStart + c]);
+        }
+    }
+
     // GridBox[{{r1c1,r1c2,…},{r2c1,…},…}, opts…]
     //   env: "pmatrix", "bmatrix", "vmatrix", "cases", "aligned", …
     // ================================================================
     void translateGridBox(uint32_t a, uint32_t n, std::string_view env,
                            bool bracketLocked = false) {
         if (n == 0) return;
+
+        // Track nesting depth so we only page the outermost matrix.
+        const int myDepth = gridBoxDepth_++;
 
         // Scan opts: look for ColumnAlignments to detect "aligned".
         // Only apply when env was NOT determined by surrounding bracket characters
@@ -1986,28 +2007,55 @@ private:
 
         // First arg is the list of rows
         const Node& rowsNode = pr_.node(pr_.children[a]);
+        uint32_t rowCount = rowsNode.childrenCount;
 
+        // ── Paged output (outermost matrix only) ─────────────────────────────
+        if (myDepth == 0 && opts_.maxRows > 0 && rowCount > (uint32_t)opts_.maxRows) {
+            const uint32_t pageSize = (uint32_t)opts_.maxRows;
+            for (uint32_t pageStart = 0; pageStart < rowCount; pageStart += pageSize) {
+                const uint32_t pageEnd = std::min(pageStart + pageSize, rowCount);
+
+                // Save result_ (may have content from surrounding context),
+                // build page into a fresh string, then push to pages_.
+                std::string saved = std::move(result_);
+                result_.clear();
+                result_.reserve(pageSize * 80);
+
+                result_ += "\\begin{";
+                result_ += resolvedEnv;
+                result_ += '}';
+                for (uint32_t r = pageStart; r < pageEnd; ++r) {
+                    if (r > pageStart) result_ += "\\\\";
+                    translateGridRow(rowsNode, r);
+                }
+                result_ += "\\end{";
+                result_ += resolvedEnv;
+                result_ += '}';
+
+                pages_.push_back(std::move(result_));
+                result_ = std::move(saved);
+            }
+            // Emit first page into result_ for single-string callers.
+            result_ += pages_[0];
+            --gridBoxDepth_;
+            return;
+        }
+
+        // ── Normal (non-paged) output ─────────────────────────────────────────
         result_ += "\\begin{";
         result_ += resolvedEnv;
         result_ += '}';
 
-        // Iterate rows
-        uint32_t rowCount = rowsNode.childrenCount;
         for (uint32_t r = 0; r < rowCount; ++r) {
             if (r > 0) result_ += "\\\\";
-            // Each row is a List
-            const Node& rowNode = pr_.node(pr_.children[rowsNode.childrenStart + r]);
-            if (!rowNode.isList()) { translate(pr_.children[rowsNode.childrenStart + r]); continue; }
-            uint32_t cellCount = rowNode.childrenCount;
-            for (uint32_t c = 0; c < cellCount; ++c) {
-                if (c > 0) result_ += " & ";
-                translate(pr_.children[rowNode.childrenStart + c]);
-            }
+            translateGridRow(rowsNode, r);
         }
 
         result_ += "\\end{";
         result_ += resolvedEnv;
         result_ += '}';
+
+        --gridBoxDepth_;
     }
 
     // ---- Fallback for unrecognised box heads ----
@@ -2163,11 +2211,11 @@ BoxResult boxToLatex(std::string_view wlBoxString, const BtlOptions& opts) {
         }
         tl_pr.reset();
         WLParser{}.parseInto(tl_clean, tl_pr);
-        return { BoxTranslator(tl_pr, opts).run(), "" };
+        return BoxTranslator(tl_pr, opts).run();
     } catch (const std::exception& ex) {
         std::string msg = ex.what();
         std::fprintf(stderr, "[wolfbook] boxToLatex parse error: %s\n", msg.c_str());
-        return { std::string(wlBoxString), std::move(msg) };
+        return { std::string(wlBoxString), std::move(msg), {} };
     }
 }
 

@@ -11,6 +11,7 @@ export interface BoxToLatexResult {
    * On success this is the rendered LaTeX (e.g. `\\frac{1}{2}`).
    * On error this is the raw WL box string passed in (verbatim pass-through),
    * so the caller can still display something meaningful.
+   * When paging is active, holds the first page for backward compatibility.
    */
   latex: string;
 
@@ -27,6 +28,18 @@ export interface BoxToLatexResult {
    *  - Input is not a string
    */
   error: string | null;
+
+  /**
+   * Present only when `maxRows` paging was requested AND the outermost
+   * matrix had more rows than `maxRows`.  Each element is a complete,
+   * self-contained LaTeX string (`\begin{env}…\end{env}`) with at most
+   * `maxRows` rows.  The environment name is determined by BTL from the
+   * surrounding bracket context (pmatrix, bmatrix, cases, aligned, …).
+   *
+   * When present, `latex` holds `pages[0]` for single-string callers.
+   * Undefined (not present) when paging was not triggered.
+   */
+  pages?: string[];
 }
 
 /**
@@ -45,6 +58,15 @@ export interface BtlOptions {
    * `(\sin\phi)^2` → `\sin^2\phi`.  Default: `true`.
    */
   trigPowerForm?: boolean;
+  /**
+   * Paging: maximum number of matrix rows per page.
+   * When > 0 and the outermost matrix has more rows, BTL splits its output
+   * into pages with proper `\begin{env}…\end{env}` wrapping on each page.
+   * The environment (pmatrix, bmatrix, cases, aligned, …) is determined
+   * automatically from the surrounding bracket context.
+   * `0` = no paging (default).
+   */
+  maxRows?: number;
 }
 
 /**

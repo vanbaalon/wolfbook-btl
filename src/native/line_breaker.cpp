@@ -1311,14 +1311,111 @@ static std::string preprocessWideFractions(std::string_view latex,
 } // anonymous namespace
 
 // ----------------------------------------------------------
+// Paging helpers (used by the public entry point)
+// ----------------------------------------------------------
+namespace {
+
+// Build a vector of balanced line-segment strings from a set of break indices.
+// Each string is the content of one \begin{aligned} row, with \left. / \right.
+// added to balance any unmatched \left...\right pairs that span line boundaries.
+// This replicates the per-line loop logic from emitAligned/emitAlignedAtRelation.
+static std::vector<std::string> buildLineSegs(
+    std::string_view latex,
+    const std::vector<Token>& tokens,
+    const std::vector<Breakpoint>& bps,
+    const std::vector<size_t>& breakIndices)
+{
+    std::vector<std::string> segs;
+    segs.reserve(breakIndices.size() + 1);
+    size_t prevEnd   = 0;
+    int pendingOpens = 0;
+
+    auto addSeg = [&](std::string_view raw) {
+        std::string seg;
+        for (int i = 0; i < pendingOpens; i++) seg += "\\left. ";
+        seg += raw;
+        int lineDepth = std::max(0, pendingOpens + leftRightNetDepth(raw));
+        for (int i = 0; i < lineDepth; i++) seg += " \\right.";
+        pendingOpens = lineDepth;
+        segs.push_back(std::move(seg));
+    };
+
+    for (size_t k = 0; k < breakIndices.size(); k++) {
+        const Breakpoint& bp  = bps[breakIndices[k]];
+        const Token&      tok = tokens[bp.tokenIndex];
+        size_t lineEnd = tok.start;
+        if (bp.breakClass == BreakClass::Close)
+            lineEnd = tok.start + tok.len;
+        addSeg(trim(latex.substr(prevEnd, lineEnd - prevEnd)));
+        prevEnd = lineEnd;
+    }
+
+    auto lastLine = trim(latex.substr(prevEnd));
+    if (!lastLine.empty()) addSeg(lastLine);
+
+    return segs;
+}
+
+// Emit the requested page from a list of balanced line segments.
+// Each page is a complete \begin{aligned}...\end{aligned} block.
+// Continuation boundaries are marked with \textcolor{gray}{\cdots} (gray \cdots).
+// maxRows == 0 means no paging (single page always).
+// Returns {result: latex for requestedPage, totalPages}.
+static wolfbook::LineBreakResult emitSegsAsPaged(
+    const std::vector<std::string>& segs,
+    int maxRows,
+    int requestedPage)
+{
+    const size_t N = segs.size();
+    if (N == 0) return { "", 1 };
+
+    const size_t pSize = (maxRows > 0) ? (size_t)maxRows : N;
+
+    // Continuation markers: gray \cdots to signal "expression continues"
+    static const char kCont[] = "\\;\\textcolor{gray}{\\cdots}";
+    static const char kResm[] = "\\textcolor{gray}{\\cdots}\\;";
+
+    auto buildPage = [&](size_t start, size_t end, bool hasBefore, bool hasAfter) -> std::string {
+        std::string out;
+        out += "\\begin{aligned}\n";
+        for (size_t i = start; i < end; i++) {
+            out += "  &";
+            if (i == start  && hasBefore) out += kResm;
+            out += segs[i];
+            if (i == end - 1 && hasAfter)  out += kCont;
+            if (i + 1 < end) out += " \\\\\n";
+            else             out += "\n";
+        }
+        out += "\\end{aligned}";
+        return out;
+    };
+
+    // Single page (no paging triggered)
+    if (maxRows <= 0 || (int)N <= maxRows)
+        return { buildPage(0, N, false, false), 1 };
+
+    // Multi-page: compute total pages, clamp requestedPage, emit only that page.
+    const int totalPages = (int)((N + pSize - 1) / pSize);
+    int pg = requestedPage;
+    if (pg < 0) pg = 0;
+    if (pg >= totalPages) pg = totalPages - 1;
+
+    const size_t start = (size_t)pg * pSize;
+    const size_t end   = std::min(start + pSize, N);
+    return { buildPage(start, end, pg > 0, end < N), totalPages };
+}
+
+} // anonymous namespace (paging helpers)
+
+// ----------------------------------------------------------
 // Public entry point
 // ----------------------------------------------------------
-std::string lineBreakLatex(std::string_view latex,
-                           const LineBreakOptions& opts)
+LineBreakResult lineBreakLatex(std::string_view latex,
+                               const LineBreakOptions& opts)
 {
     // Skip if already multi-line (contains \\ or is an environment)
-    if (latex.find("\\\\") != std::string_view::npos) return std::string(latex);
-    if (latex.find("\\begin{") != std::string_view::npos) return std::string(latex);
+    if (latex.find("\\\\") != std::string_view::npos) return { std::string(latex), 1 };
+    if (latex.find("\\begin{") != std::string_view::npos) return { std::string(latex), 1 };
 
     // Compute effective page width (pixel-based takes priority over em-based)
     double effectivePageWidth = opts.pageWidth;
@@ -1335,25 +1432,31 @@ std::string lineBreakLatex(std::string_view latex,
 
     // Tokenize
     auto tokens = tokenize(input);
-    if (tokens.empty()) return preprocessed;
+    if (tokens.empty()) return { preprocessed, 1 };
 
     // Compute total width
     double totalWidth = 0.0;
     for (auto& t : tokens) totalWidth += t.width;
 
     // If it fits, return preprocessed (may have inner line-breaks)
-    if (totalWidth <= effectivePageWidth) return preprocessed;
+    if (totalWidth <= effectivePageWidth) return { preprocessed, 1 };
 
     // Extract breakpoints
     auto bps = extractBreakpoints(tokens, opts.maxDelimDepth);
-    if (bps.empty()) return preprocessed;
+    if (bps.empty()) return { preprocessed, 1 };
 
     // Find optimal breaks
     auto breakIndices = findOptimalBreaks(bps, effectivePageWidth,
                                           opts.indentStep, totalWidth);
-    if (breakIndices.empty()) return preprocessed;
+    if (breakIndices.empty()) return { preprocessed, 1 };
     breakIndices = appendTailRescueBreaks(bps, std::move(breakIndices),
                                           effectivePageWidth, opts.indentStep, totalWidth);
+
+    // When paging is requested, use segment-based path (works for all layout types)
+    if (opts.maxRows > 0) {
+        auto segs = buildLineSegs(input, tokens, bps, breakIndices);
+        return emitSegsAsPaged(segs, opts.maxRows, opts.requestedPage);
+    }
 
     // Determine layout: check LHS width for straight ladder vs staggered
     double lhsWidth = findLHSWidth(tokens);
@@ -1368,11 +1471,11 @@ std::string lineBreakLatex(std::string_view latex,
     // Use aligned-at-relation if we have top-level relations
     // and LHS is not too wide (< 40% of page width)
     if (hasTopRelation && lhsWidth < effectivePageWidth * 0.4) {
-        return emitAlignedAtRelation(input, tokens, bps, breakIndices);
+        return { emitAlignedAtRelation(input, tokens, bps, breakIndices), 1 };
     }
 
     // Otherwise, use simple aligned with quad indents
-    return emitAligned(input, tokens, bps, breakIndices);
+    return { emitAligned(input, tokens, bps, breakIndices), 1 };
 }
 
 } // namespace wolfbook

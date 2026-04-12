@@ -40,20 +40,37 @@ Napi::Value JsBoxToLatex(const Napi::CallbackInfo& info) {
 
     // Read optional style options from second argument
     wolfbook::BtlOptions opts;
+    int btlRequestedPage = 0;
     if (info.Length() >= 2 && info[1].IsObject()) {
         Napi::Object jsOpts = info[1].As<Napi::Object>();
         if (jsOpts.Has("trigOmitParens"))
             opts.trigOmitParens = jsOpts.Get("trigOmitParens").As<Napi::Boolean>().Value();
         if (jsOpts.Has("trigPowerForm"))
             opts.trigPowerForm = jsOpts.Get("trigPowerForm").As<Napi::Boolean>().Value();
+        if (jsOpts.Has("maxRows"))
+            opts.maxRows = jsOpts.Get("maxRows").As<Napi::Number>().Int32Value();
+        if (jsOpts.Has("requestedPage"))
+            btlRequestedPage = jsOpts.Get("requestedPage").As<Napi::Number>().Int32Value();
     }
 
     // Call the C++ translator — never throws (catches internally)
     wolfbook::BoxResult result = wolfbook::boxToLatex(input, opts);
 
-    // Build result object: { latex, error }
+    // Build result object: { latex, error, totalPages? }
+    // When paging is triggered (pages.size() > 1), select the requested page
+    // and report totalPages so the client can build prev/next navigation.
+    // The caller never receives all pages — only the one it requested.
     Napi::Object obj = Napi::Object::New(env);
-    obj.Set("latex", Napi::String::New(env, result.latex));
+    if (result.pages.size() > 1) {
+        const int totalPages = (int)result.pages.size();
+        int pg = btlRequestedPage;
+        if (pg < 0) pg = 0;
+        if (pg >= totalPages) pg = totalPages - 1;
+        obj.Set("latex", Napi::String::New(env, result.pages[pg]));
+        obj.Set("totalPages", Napi::Number::New(env, totalPages));
+    } else {
+        obj.Set("latex", Napi::String::New(env, result.latex));
+    }
     if (result.error.empty()) {
         obj.Set("error", env.Null());
     } else {
@@ -95,10 +112,21 @@ Napi::Value JsLineBreakLatex(const Napi::CallbackInfo& info) {
             opts.baseFontSizePx = jsOpts.Get("baseFontSizePx").As<Napi::Number>().DoubleValue();
         if (jsOpts.Has("maxIterations"))
             opts.maxIterations = jsOpts.Get("maxIterations").As<Napi::Number>().Int32Value();
+        if (jsOpts.Has("maxRows"))
+            opts.maxRows = jsOpts.Get("maxRows").As<Napi::Number>().Int32Value();
+        if (jsOpts.Has("requestedPage"))
+            opts.requestedPage = jsOpts.Get("requestedPage").As<Napi::Number>().Int32Value();
     }
 
-    std::string result = wolfbook::lineBreakLatex(latex, opts);
-    return Napi::String::New(env, result);
+    wolfbook::LineBreakResult result = wolfbook::lineBreakLatex(latex, opts);
+
+    // Return { result: string, totalPages: int }.
+    // totalPages > 1 means the expression was split into pages; the caller
+    // should display prev/next controls and request other pages on demand.
+    Napi::Object obj = Napi::Object::New(env);
+    obj.Set("result", Napi::String::New(env, result.result));
+    obj.Set("totalPages", Napi::Number::New(env, result.totalPages));
+    return obj;
 }
 
 // ----------------------------------------------------------
