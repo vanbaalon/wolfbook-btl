@@ -67,6 +67,17 @@ export interface BtlOptions {
    * `0` = no paging (default).
    */
   maxRows?: number;
+  /**
+   * Request a specific page when maxRows paging is active (0-based).
+   * Ignored if `allPages` is true.
+   */
+  requestedPage?: number;
+  /**
+   * When true and paging is active, return ALL page LaTeX strings in
+   * `result.pages[]` instead of just one, allowing the caller to cache
+   * all pages from a single C++ call.
+   */
+  allPages?: boolean;
 }
 
 /**

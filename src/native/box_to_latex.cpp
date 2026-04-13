@@ -516,6 +516,13 @@ private:
         if (stripped == ":>")  { result_ += "\\mapsto "; return; }
         if (stripped == "|->") { result_ += "\\mapsto "; return; } // Function[{x},body] mapsto arrow
         if (stripped == "&")   { result_ += "\\& ";      return; } // pure-function ampersand
+        // WL logical/bitwise infix operators
+        if (stripped == "&&")  { result_ += "\\land ";   return; } // And
+        if (stripped == "||")  { result_ += "\\lor ";    return; } // Or
+        if (stripped == "!")   { result_ += "\\lnot ";   return; } // Not
+        // WL Association brackets
+        if (stripped == "<|")  { result_ += "\\langle\\!\\!|"; return; }
+        if (stripped == "|>")  { result_ += "|\\!\\!\\rangle"; return; }
         // Big-O order symbol (appears in SeriesData output as the bare string "O")
         if (stripped == "O")   { result_ += "\\mathcal{O}"; return; }
         // WL relational operators that map to single LaTeX symbols
@@ -1570,7 +1577,79 @@ private:
                 return;
             }
         }
+        // If the display arg is a string containing \!\(\* embedded box expressions
+        // (e.g. StringForm output like "level \!\(\*FormBox[\"0\", TraditionalForm]\)"),
+        // render it inline — extract the plain text prefix/suffix and recursively
+        // translate each embedded box sub-expression.
+        const Node& dispNode = pr_.node(pr_.children[a]);
+        if (dispNode.kind == NodeKind::String) {
+            std::string_view sv = pr_.str(dispNode);
+            InfoBox ib = findNextInfoBox(sv, 0);
+            if (ib.patStart != std::string_view::npos) {
+                // Has at least one embedded box — render the whole string inline.
+                renderInterpBoxString(sv);
+                return;
+            }
+        }
         translate(pr_.children[a]);
+    }
+
+    // Render a string that may contain \!\(\*BoxExpr\) sequences inline (no array context).
+    // Plain text segments → \text{…}; embedded boxes → translated recursively.
+    void renderInterpBoxString(std::string_view s) {
+        size_t pos = 0;
+        while (pos < s.size()) {
+            InfoBox ib = findNextInfoBox(s, pos);
+            if (ib.patStart == std::string_view::npos) {
+                // No more embedded boxes — emit remaining plain text
+                emitInlineText(s.substr(pos));
+                break;
+            }
+            if (ib.patStart > pos) emitInlineText(s.substr(pos, ib.patStart - pos));
+            // Pre-process box expression: unescape \" → "
+            std::string_view rawExpr = s.substr(ib.cStart, ib.cEnd - ib.cStart);
+            std::string boxExpr;
+            boxExpr.reserve(rawExpr.size());
+            for (size_t i = 0; i < rawExpr.size(); ++i) {
+                if (rawExpr[i] == '\\' && i + 1 < rawExpr.size() && rawExpr[i+1] == '"') {
+                    boxExpr += '"'; ++i;
+                } else {
+                    boxExpr += rawExpr[i];
+                }
+            }
+            try {
+                ParseResult innerPr;
+                WLParser{}.parseInto(boxExpr, innerPr);
+                result_ += BoxTranslator(innerPr, opts_).run().latex;
+            } catch (...) {
+                result_ += "\\cdots";
+            }
+            pos = (ib.cEnd + 2 <= s.size()) ? ib.cEnd + 2 : s.size(); // skip past \)
+        }
+    }
+
+    // Emit a plain-text segment inline (in math mode), escaping special chars.
+    // Strips surrounding WL quote characters and ignores empty segments.
+    void emitInlineText(std::string_view text) {
+        // Strip leading/trailing " that WL wraps string values in
+        while (!text.empty() && text.front() == '"') text.remove_prefix(1);
+        while (!text.empty() && text.back()  == '"') text.remove_suffix(1);
+        if (text.empty()) return;
+        result_ += "\\text{";
+        for (char c : text) {
+            switch (c) {
+                case '#':  result_ += "\\#"; break;
+                case '%':  result_ += "\\%"; break;
+                case '&':  result_ += "\\&"; break;
+                case '_':  result_ += "\\_"; break;
+                case '{':  result_ += "\\{"; break;
+                case '}':  result_ += "\\}"; break;
+                case '$':  result_ += "\\$"; break;
+                case '\\': result_ += "\\textbackslash{}"; break;
+                default:   result_ += c;
+            }
+        }
+        result_ += '}';
     }
 
     // ---- InformationData[<|"FullName"->…, "Usage"->…, …|>, False] ----

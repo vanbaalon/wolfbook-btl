@@ -1360,11 +1360,13 @@ static std::vector<std::string> buildLineSegs(
 // Each page is a complete \begin{aligned}...\end{aligned} block.
 // Continuation boundaries are marked with \textcolor{gray}{\cdots} (gray \cdots).
 // maxRows == 0 means no paging (single page always).
-// Returns {result: latex for requestedPage, totalPages}.
+// When allPages is true, returns ALL pages in result.pages[] from a single call.
+// Returns {result: latex for requestedPage, totalPages, pages?}.
 static wolfbook::LineBreakResult emitSegsAsPaged(
     const std::vector<std::string>& segs,
     int maxRows,
-    int requestedPage)
+    int requestedPage,
+    bool allPages = false)
 {
     const size_t N = segs.size();
     if (N == 0) return { "", 1 };
@@ -1394,8 +1396,21 @@ static wolfbook::LineBreakResult emitSegsAsPaged(
     if (maxRows <= 0 || (int)N <= maxRows)
         return { buildPage(0, N, false, false), 1 };
 
-    // Multi-page: compute total pages, clamp requestedPage, emit only that page.
+    // Multi-page: compute total pages, clamp requestedPage.
     const int totalPages = (int)((N + pSize - 1) / pSize);
+
+    // allPages mode: build every page in one pass and return them all.
+    if (allPages) {
+        std::vector<std::string> allPg;
+        allPg.reserve(totalPages);
+        for (int p = 0; p < totalPages; p++) {
+            const size_t s = (size_t)p * pSize;
+            const size_t e = std::min(s + pSize, N);
+            allPg.push_back(buildPage(s, e, p > 0, e < N));
+        }
+        return { allPg[0], totalPages, std::move(allPg) };
+    }
+
     int pg = requestedPage;
     if (pg < 0) pg = 0;
     if (pg >= totalPages) pg = totalPages - 1;
@@ -1455,7 +1470,7 @@ LineBreakResult lineBreakLatex(std::string_view latex,
     // When paging is requested, use segment-based path (works for all layout types)
     if (opts.maxRows > 0) {
         auto segs = buildLineSegs(input, tokens, bps, breakIndices);
-        return emitSegsAsPaged(segs, opts.maxRows, opts.requestedPage);
+        return emitSegsAsPaged(segs, opts.maxRows, opts.requestedPage, opts.allPages);
     }
 
     // Determine layout: check LHS width for straight ladder vs staggered

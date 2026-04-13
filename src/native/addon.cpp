@@ -52,22 +52,37 @@ Napi::Value JsBoxToLatex(const Napi::CallbackInfo& info) {
         if (jsOpts.Has("requestedPage"))
             btlRequestedPage = jsOpts.Get("requestedPage").As<Napi::Number>().Int32Value();
     }
+    bool allPages = false;
+    if (info.Length() >= 2 && info[1].IsObject()) {
+        Napi::Object jsOpts = info[1].As<Napi::Object>();
+        if (jsOpts.Has("allPages"))
+            allPages = jsOpts.Get("allPages").As<Napi::Boolean>().Value();
+    }
 
     // Call the C++ translator — never throws (catches internally)
     wolfbook::BoxResult result = wolfbook::boxToLatex(input, opts);
 
-    // Build result object: { latex, error, totalPages? }
-    // When paging is triggered (pages.size() > 1), select the requested page
-    // and report totalPages so the client can build prev/next navigation.
-    // The caller never receives all pages — only the one it requested.
+    // Build result object: { latex, error, totalPages?, pages? }
+    // When paging is triggered (pages.size() > 1):
+    //   - allPages:true  → return all page LaTeX strings in result.pages[] (no re-run needed)
+    //   - allPages:false → select the single requested page (legacy behaviour)
     Napi::Object obj = Napi::Object::New(env);
     if (result.pages.size() > 1) {
         const int totalPages = (int)result.pages.size();
-        int pg = btlRequestedPage;
-        if (pg < 0) pg = 0;
-        if (pg >= totalPages) pg = totalPages - 1;
-        obj.Set("latex", Napi::String::New(env, result.pages[pg]));
         obj.Set("totalPages", Napi::Number::New(env, totalPages));
+        if (allPages) {
+            // Expose all pages as a JS array — caller caches them all at once
+            Napi::Array pagesArr = Napi::Array::New(env, totalPages);
+            for (int i = 0; i < totalPages; i++)
+                pagesArr.Set((uint32_t)i, Napi::String::New(env, result.pages[i]));
+            obj.Set("pages", pagesArr);
+            obj.Set("latex", Napi::String::New(env, result.pages[0]));
+        } else {
+            int pg = btlRequestedPage;
+            if (pg < 0) pg = 0;
+            if (pg >= totalPages) pg = totalPages - 1;
+            obj.Set("latex", Napi::String::New(env, result.pages[pg]));
+        }
     } else {
         obj.Set("latex", Napi::String::New(env, result.latex));
     }
@@ -116,16 +131,26 @@ Napi::Value JsLineBreakLatex(const Napi::CallbackInfo& info) {
             opts.maxRows = jsOpts.Get("maxRows").As<Napi::Number>().Int32Value();
         if (jsOpts.Has("requestedPage"))
             opts.requestedPage = jsOpts.Get("requestedPage").As<Napi::Number>().Int32Value();
+        if (jsOpts.Has("allPages"))
+            opts.allPages = jsOpts.Get("allPages").As<Napi::Boolean>().Value();
     }
 
     wolfbook::LineBreakResult result = wolfbook::lineBreakLatex(latex, opts);
 
-    // Return { result: string, totalPages: int }.
+    // Return { result: string, totalPages: int, pages?: string[] }.
     // totalPages > 1 means the expression was split into pages; the caller
     // should display prev/next controls and request other pages on demand.
+    // When allPages was requested, pages[] holds all page LaTeX strings.
     Napi::Object obj = Napi::Object::New(env);
     obj.Set("result", Napi::String::New(env, result.result));
     obj.Set("totalPages", Napi::Number::New(env, result.totalPages));
+    if (!result.pages.empty()) {
+        const int n = (int)result.pages.size();
+        Napi::Array pagesArr = Napi::Array::New(env, n);
+        for (int i = 0; i < n; i++)
+            pagesArr.Set((uint32_t)i, Napi::String::New(env, result.pages[i]));
+        obj.Set("pages", pagesArr);
+    }
     return obj;
 }
 

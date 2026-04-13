@@ -32,6 +32,9 @@ struct LineBreakOptions {
     // Caller requests exactly one page; totalPages in the result tells how
     // many pages exist so the client can build prev/next navigation.
     int    requestedPage = 0;
+    // When true and paging is active, compute ALL pages in one call and
+    // return them in result.pages[]. Avoids re-tokenizing for each page.
+    bool   allPages      = false;
 };
 
 // Result returned by lineBreakLatex.
@@ -42,6 +45,9 @@ struct LineBreakOptions {
 struct LineBreakResult {
     std::string result;
     int         totalPages = 1;  // 1 = no paging; >1 = use prev/next navigation
+    // When allPages was requested and paging is active, holds all page LaTeX strings.
+    // Empty when allPages is false or paging was not triggered.
+    std::vector<std::string> pages;
 };
 
 // Apply line-breaking to a single-line LaTeX string.
