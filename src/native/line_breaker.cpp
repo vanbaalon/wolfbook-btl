@@ -34,6 +34,7 @@ enum class BreakClass : uint8_t {
     Comma,      // ,
     Open,       // (, [, \{, \langle, ...
     Close,      // ), ], \}, \rangle, ...
+    DigitBreak, // boundary between groups in a very long integer (last resort)
 };
 
 // ----------------------------------------------------------
@@ -406,6 +407,7 @@ static double estimateEnvironmentWidth(std::string_view envName,
 struct Tokenizer {
     std::string_view src;
     size_t           pos = 0;
+    bool             inLongRun_ = false; // true once a long digit run has started
 
     bool atEnd() const { return pos >= src.size(); }
 
@@ -576,6 +578,30 @@ struct Tokenizer {
             out.width = estimateBracedWidth(src.substr(out.start + 1,
                                                         out.len - 1)) * 0.7;
             return true;
+        }
+
+        // ── Case 4a: long digit run — emit in groups so the DP can break between them ──
+        if (std::isdigit(static_cast<unsigned char>(c))) {
+            static constexpr size_t kLongRun   = 40;  // threshold: runs shorter than this render as-is
+            static constexpr size_t kGroupSize = 10;  // digits per segment
+            size_t runEnd = pos + 1;
+            while (runEnd < src.size() &&
+                   std::isdigit(static_cast<unsigned char>(src[runEnd])))
+                ++runEnd;
+            size_t runLen = runEnd - pos;
+            if (runLen > kLongRun) inLongRun_ = true;
+            if (inLongRun_) {
+                // Emit up to kGroupSize digits as one DigitBreak token.
+                size_t groupEnd = pos + std::min(runLen, kGroupSize);
+                out.len   = groupEnd - pos;
+                out.width = out.len * 0.50;
+                out.breakClass = BreakClass::DigitBreak;
+                pos = groupEnd;
+                // Clear the flag when the digit run is fully consumed.
+                if (pos >= runEnd) inLongRun_ = false;
+                return true;
+            }
+            // Short digit string: fall through to standard single-char path
         }
 
         // ── Case 4: single characters ──
@@ -794,6 +820,7 @@ static std::vector<Breakpoint> extractBreakpoints(
             case BreakClass::Comma:    penalty =   30.0 + depthPenalty; break;
             case BreakClass::Open:     penalty =  200.0 + depthPenalty; break;
             case BreakClass::Close:    penalty =  200.0 + depthPenalty; break;
+            case BreakClass::DigitBreak: penalty = 5000.0 + depthPenalty; break;
             default:                   penalty = 1000.0; break;
         }
 
@@ -944,9 +971,15 @@ static std::vector<size_t> appendTailRescueBreaks(
             double tinyTailPenalty = (secondWidth < lineWidth * 0.12)
                 ? (lineWidth * 0.12 - secondWidth) * 200.0
                 : 0.0;
+            // Prefer the break that balances the two segments as evenly as
+            // possible — this avoids picking the first candidate when all
+            // candidates have identical overflow (e.g. equal-width digit groups),
+            // which would leave a short second-to-last line and long last line.
+            double imbalance = std::abs(firstWidth - secondWidth);
             double score = std::max(over1, over2) * 10000.0
                 + over1 * 100.0
                 + over2 * 100.0
+                + imbalance * 0.5
                 + std::max(0.0, bps[j].penalty)
                 + tinyTailPenalty;
 
@@ -1061,31 +1094,37 @@ static std::string emitAligned(
 
     size_t prevEnd = 0; // byte offset where previous line ended
     int pendingOpens = 0; // unmatched \left opens carried from previous line
+    bool prevWasDigitBreak = false; // prepend marker on continuation line
 
     for (size_t k = 0; k < breakIndices.size(); k++) {
         size_t bpIdx = breakIndices[k];
         const Breakpoint& bp = bps[bpIdx];
         const Token& tok = tokens[bp.tokenIndex];
 
-        // Current line: from prevEnd to just before this break token
+        // Current line: from prevEnd to just before this break token.
+        // Exception: Close and DigitBreak break AFTER the token.
         size_t lineEnd = tok.start;
-        if (bp.breakClass == BreakClass::Close) {
-            // Never emit "\\" immediately before a closing delimiter.
-            // If a breakpoint lands at a close token, treat it as a break
-            // right after the token.
+        if (bp.breakClass == BreakClass::Close ||
+            bp.breakClass == BreakClass::DigitBreak) {
             lineEnd = tok.start + tok.len;
         }
         std::string_view lineContent = trim(latex.substr(prevEnd, lineEnd - prevEnd));
 
         out += "  &";
         for (int i = 0; i < pendingOpens; i++) out += "\\left. ";
+        if (prevWasDigitBreak) out += "{\\color{gray}\\vdots}";
         out += lineContent;
         // Close any \left opens that are unmatched at this break point to
         // avoid "missing \right" errors when \\ splits a \left...\right pair.
         int lineDepth = std::max(0, pendingOpens + leftRightNetDepth(lineContent));
         for (int i = 0; i < lineDepth; i++) out += " \\right.";
+        // For digit-group breaks, add a gray continuation marker so the
+        // reader knows the number continues on the next line.
+        if (bp.breakClass == BreakClass::DigitBreak)
+            out += "{\\color{gray}\\vdots}";
         out += " \\\\\n";
         pendingOpens = lineDepth;
+        prevWasDigitBreak = (bp.breakClass == BreakClass::DigitBreak);
 
         prevEnd = lineEnd;
     }
@@ -1095,6 +1134,7 @@ static std::string emitAligned(
     if (!lastLine.empty()) {
         out += "  &";
         for (int i = 0; i < pendingOpens; i++) out += "\\left. ";
+        if (prevWasDigitBreak) out += "{\\color{gray}\\vdots}";
         out += lastLine;
         out += "\n";
     }
@@ -1121,6 +1161,7 @@ static std::string emitAlignedAtRelation(
     bool firstLine = true;
     bool hasTopRelation = false;
     int pendingOpens = 0; // unmatched \left opens carried from previous line
+    bool prevWasDigitBreak = false;
 
     // Check if any break is a top-level relation
     for (size_t k = 0; k < breakIndices.size(); k++) {
@@ -1136,20 +1177,24 @@ static std::string emitAlignedAtRelation(
         const Breakpoint& bp = bps[bpIdx];
         const Token& tok = tokens[bp.tokenIndex];
         size_t lineEnd = tok.start;
-        if (bp.breakClass == BreakClass::Close) {
-            // Keep closing delimiters on the same line as their content.
+        if (bp.breakClass == BreakClass::Close ||
+            bp.breakClass == BreakClass::DigitBreak) {
             lineEnd = tok.start + tok.len;
         }
         std::string_view lineContent = trim(latex.substr(prevEnd, lineEnd - prevEnd));
 
         out += "  &";
         for (int i = 0; i < pendingOpens; i++) out += "\\left. ";
+        if (prevWasDigitBreak) out += "{\\color{gray}\\vdots}";
         out += lineContent;
         // Close any \left opens that are unmatched at this break point.
         int lineDepth = std::max(0, pendingOpens + leftRightNetDepth(lineContent));
         for (int i = 0; i < lineDepth; i++) out += " \\right.";
+        if (bp.breakClass == BreakClass::DigitBreak)
+            out += "{\\color{gray}\\vdots}";
         out += " \\\\\n";
         pendingOpens = lineDepth;
+        prevWasDigitBreak = (bp.breakClass == BreakClass::DigitBreak);
         firstLine = false;
 
         prevEnd = lineEnd;
@@ -1164,6 +1209,7 @@ static std::string emitAlignedAtRelation(
             out += "  ";
         }
         for (int i = 0; i < pendingOpens; i++) out += "\\left. ";
+        if (prevWasDigitBreak) out += "{\\color{gray}\\vdots}";
         out += lastLine;
         out += "\n";
     }
@@ -1186,25 +1232,30 @@ static std::string emitGathered(
 
     size_t prevEnd = 0;
     int pendingOpens = 0; // unmatched \left opens carried from previous line
+    bool prevWasDigitBreak = false;
 
     for (size_t k = 0; k < breakIndices.size(); k++) {
         size_t bpIdx = breakIndices[k];
         const Breakpoint& bp = bps[bpIdx];
         const Token& tok = tokens[bp.tokenIndex];
         size_t lineEnd = tok.start;
-        if (bp.breakClass == BreakClass::Close) {
-            // Avoid invalid "\\" before \right-like closers.
+        if (bp.breakClass == BreakClass::Close ||
+            bp.breakClass == BreakClass::DigitBreak) {
             lineEnd = tok.start + tok.len;
         }
         std::string_view lineContent = trim(latex.substr(prevEnd, lineEnd - prevEnd));
         out += "  ";
         for (int i = 0; i < pendingOpens; i++) out += "\\left. ";
+        if (prevWasDigitBreak) out += "{\\color{gray}\\vdots}";
         out += lineContent;
         // Close any \left opens that are unmatched at this break point.
         int lineDepth = std::max(0, pendingOpens + leftRightNetDepth(lineContent));
         for (int i = 0; i < lineDepth; i++) out += " \\right.";
+        if (bp.breakClass == BreakClass::DigitBreak)
+            out += "{\\color{gray}\\vdots}";
         out += " \\\\\n";
         pendingOpens = lineDepth;
+        prevWasDigitBreak = (bp.breakClass == BreakClass::DigitBreak);
         prevEnd = lineEnd;
     }
 
@@ -1212,6 +1263,7 @@ static std::string emitGathered(
     if (!lastLine.empty()) {
         out += "  ";
         for (int i = 0; i < pendingOpens; i++) out += "\\left. ";
+        if (prevWasDigitBreak) out += "{\\color{gray}\\vdots}";
         out += lastLine;
         out += "\n";
     }
@@ -1325,17 +1377,22 @@ static std::vector<std::string> buildLineSegs(
     const std::vector<Breakpoint>& bps,
     const std::vector<size_t>& breakIndices)
 {
+    static const char kDigitCont[] = "{\\color{gray}\\vdots}";
+
     std::vector<std::string> segs;
     segs.reserve(breakIndices.size() + 1);
     size_t prevEnd   = 0;
     int pendingOpens = 0;
+    bool prevWasDigitBreak = false;
 
-    auto addSeg = [&](std::string_view raw) {
+    auto addSeg = [&](std::string_view raw, bool appendDigit, bool prependDigit) {
         std::string seg;
         for (int i = 0; i < pendingOpens; i++) seg += "\\left. ";
+        if (prependDigit) seg += kDigitCont;
         seg += raw;
         int lineDepth = std::max(0, pendingOpens + leftRightNetDepth(raw));
         for (int i = 0; i < lineDepth; i++) seg += " \\right.";
+        if (appendDigit) seg += kDigitCont;
         pendingOpens = lineDepth;
         segs.push_back(std::move(seg));
     };
@@ -1344,14 +1401,17 @@ static std::vector<std::string> buildLineSegs(
         const Breakpoint& bp  = bps[breakIndices[k]];
         const Token&      tok = tokens[bp.tokenIndex];
         size_t lineEnd = tok.start;
-        if (bp.breakClass == BreakClass::Close)
+        if (bp.breakClass == BreakClass::Close ||
+            bp.breakClass == BreakClass::DigitBreak)
             lineEnd = tok.start + tok.len;
-        addSeg(trim(latex.substr(prevEnd, lineEnd - prevEnd)));
+        bool isDigit = (bp.breakClass == BreakClass::DigitBreak);
+        addSeg(trim(latex.substr(prevEnd, lineEnd - prevEnd)), isDigit, prevWasDigitBreak);
+        prevWasDigitBreak = isDigit;
         prevEnd = lineEnd;
     }
 
     auto lastLine = trim(latex.substr(prevEnd));
-    if (!lastLine.empty()) addSeg(lastLine);
+    if (!lastLine.empty()) addSeg(lastLine, false, prevWasDigitBreak);
 
     return segs;
 }
