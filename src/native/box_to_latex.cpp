@@ -560,13 +560,36 @@ private:
         // Otherwise classify the (possibly stripped) plain string
         auto cls = classifyToken(stripped);
         switch (cls) {
-            case TokenClass::Number:
-                result_ += stripped;
-                // Trailing decimal point (e.g. "1." from "1.`") gets a thin
-                // space so it reads as a number, not punctuation.
-                if (!stripped.empty() && stripped.back() == '.')
-                    result_ += "\\,";
+            case TokenClass::Number: {
+                // Long pure-integer line-breaking: if the token is all digits
+                // and exceeds 40 chars (e.g. 100! = 158 digits), insert
+                // \allowbreak every 5 digits so KaTeX can wrap the line rather
+                // than overflowing.  A trailing gray \cdots signals continuation.
+                static constexpr size_t kLongIntThreshold = 40;
+                static constexpr size_t kDigitGroup       = 10;
+                bool allDigits = !stripped.empty();
+                for (char c : stripped)
+                    if (!std::isdigit(static_cast<unsigned char>(c)))
+                        { allDigits = false; break; }
+                if (allDigits && stripped.size() > kLongIntThreshold) {
+                    for (size_t i = 0; i < stripped.size(); ++i) {
+                        // High-penalty break point: browser only wraps here
+                        // as a last resort (penalty 9000 ≈ "never, unless
+                        // the alternative is an overflow").
+                        if (i > 0 && i % kDigitGroup == 0)
+                            result_ += "{\\penalty 9000}";
+                        result_ += stripped[i];
+                    }
+                    result_ += "{\\color{gray}\\cdots}";
+                } else {
+                    result_ += stripped;
+                    // Trailing decimal point (e.g. "1." from "1.`") gets a thin
+                    // space so it reads as a number, not punctuation.
+                    if (!stripped.empty() && stripped.back() == '.')
+                        result_ += "\\,";
+                }
                 break;
+            }
             case TokenClass::SingleChar:
             case TokenClass::Operator:
                 // If the string contains a space it is display text, not a
