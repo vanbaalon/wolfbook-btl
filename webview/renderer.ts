@@ -30,7 +30,7 @@ const KATEX_OPTIONS: katex.KatexOptions = {
     errorColor: '#cc0000',
     trust: false,
     strict: false,    // required for \textcolor
-    maxExpand: 5000,   // default is 1000; increase for complex Mathematica output
+    maxExpand: 100000, // default is 1000; increase for complex Mathematica output
     macros: {
         '\\dd': '\\mathrm{d}',
         '\\R':  '\\mathbb{R}',

@@ -23,7 +23,7 @@ const BASE_OPTIONS: katex.KatexOptions = {    output: 'html',   // suppress kate
     errorColor: '#cc0000',
     trust: false,
     strict: false,     // required for \textcolor and non-standard commands
-    maxExpand: 5000,   // default is 1000; increase for complex Mathematica output
+    maxExpand: 100000, // default is 1000; increase for complex Mathematica output
     macros: {
         '\\dd': '\\mathrm{d}',                 // differential d
         '\\R':  '\\mathbb{R}',                  // shorthand blackboard R
