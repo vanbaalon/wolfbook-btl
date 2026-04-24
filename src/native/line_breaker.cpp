@@ -98,6 +98,7 @@ static bool isOpenDelim(std::string_view cmd) {
         "(", "[", "\\{", "\\langle", "\\lvert", "\\lVert",
         "\\lfloor", "\\lceil", "\\left(",  "\\left[",
         "\\left\\{", "\\left\\langle", "\\bigl(", "\\Bigl(",
+        "\\langle|",
     };
     for (auto& o : opens) if (cmd == o) return true;
     return false;
@@ -1488,9 +1489,41 @@ static wolfbook::LineBreakResult emitSegsAsPaged(
 LineBreakResult lineBreakLatex(std::string_view latex,
                                const LineBreakOptions& opts)
 {
-    // Skip if already multi-line (contains \\ or is an environment)
-    if (latex.find("\\\\") != std::string_view::npos) return { std::string(latex), 1 };
-    if (latex.find("\\begin{") != std::string_view::npos) return { std::string(latex), 1 };
+    // Skip if already multi-line:
+    //   (a) the string IS a top-level environment (starts with \begin{)
+    //   (b) the string contains a top-level \\ row separator (outside any
+    //       environment or braces), indicating it already spans multiple lines.
+    // We track \begin{}/\end{} depth so that associations containing embedded
+    // matrices (\begin{pmatrix}…\end{pmatrix}) are NOT skipped — only top-level
+    // row separators that exist outside any environment cause the early exit.
+    {
+        // (a) starts with \begin{ — the whole expression is an environment
+        {
+            size_t s = 0;
+            while (s < latex.size() && latex[s] == ' ') ++s;  // skip leading spaces
+            if (latex.substr(s, 7) == "\\begin{")
+                return { std::string(latex), 1 };
+        }
+        // (b) top-level \\ outside any environment or brace group
+        {
+            int braceDepth = 0;
+            int envDepth   = 0;
+            for (size_t ci = 0; ci + 1 < latex.size(); ++ci) {
+                if (latex[ci] == '{') { ++braceDepth; continue; }
+                if (latex[ci] == '}') { if (braceDepth > 0) --braceDepth; continue; }
+                if (latex[ci] == '\\') {
+                    if (latex.substr(ci, 7) == "\\begin{") {
+                        ++envDepth; ci += 6; continue;
+                    }
+                    if (latex.substr(ci, 5) == "\\end{") {
+                        if (envDepth > 0) --envDepth; ci += 4; continue;
+                    }
+                    if (latex[ci + 1] == '\\' && braceDepth == 0 && envDepth == 0)
+                        return { std::string(latex), 1 };
+                }
+            }
+        }
+    }
 
     // Compute effective page width (pixel-based takes priority over em-based)
     double effectivePageWidth = opts.pageWidth;

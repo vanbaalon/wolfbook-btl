@@ -728,6 +728,8 @@ const std::unordered_map<std::string_view, std::string_view> kTable {
     {"\\[RightTriangle]",                           "\\triangleright"},
     {"\\[RightTriangleEqual]",                      "\\trianglerighteq"},
     {"\\[RightVector]",                             "\\rightharpoonup"},
+    {"\\[Rule]",                                     "\\to"},
+    {"\\[RuleDelayed]",                              "\\mapsto"},
     {"\\[RoundSpaceIndicator]",                     "\\text{Null}"},
     {"\\[Rupee]",                                   "\\rupee"},
     {"\\[SadSmiley]",                               "\\mathsym{\\SadSmiley}"},
@@ -847,6 +849,7 @@ const std::unordered_map<std::string_view, std::string_view> kTable {
     {"\\[ThickSpace]",                              "\\;"},
     {"\\[ThinSpace]",                               "\\,"},
     {"\\[Thorn]",                                   "\\mathsym{\\Thorn}"},
+    {"\\[Times]",                                   "\\times"},
     {"\\[Tilde]",                                   "\\sim"},
     {"\\[TildeEqual]",                              "\\simeq"},
     {"\\[TildeFullEqual]",                          "\\cong"},
@@ -970,6 +973,8 @@ const std::unordered_map<std::string_view, std::string_view> kTable {
     {"\xe2\x89\xa5",  "\\geq"},      // ≥ U+2265
     {"\xe2\x88\x88",  "\\in"},       // ∈ U+2208
     {"\xe2\x86\x92",  "\\to"},       // → U+2192
+    {"\xef\x94\xa2",  "\\to"},       // WL \[Rule] U+F522 (PUA)
+    {"\xe2\xa7\xb4",  "\\mapsto"},   // WL \[RuleDelayed] U+29F4 ⧴
     {"\xe2\x86\x90",  "\\leftarrow"},// ← U+2190
     {"\xe2\x87\x92",  "\\Rightarrow"}, // ⇒ U+21D2
     {"\xe2\x87\x94",  "\\Leftrightarrow"}, // ⇔ U+21D4

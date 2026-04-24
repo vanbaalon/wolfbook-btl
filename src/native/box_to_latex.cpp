@@ -205,6 +205,132 @@ static TokenClass classifyToken(std::string_view s) {
 }
 
 // ----------------------------------------------------------
+// WL string escape helpers — for strings in both text and math contexts
+// ----------------------------------------------------------
+
+// Encode a Unicode codepoint (U+0000..U+10FFFF) as UTF-8 and append to out.
+static void appendCodepointUtf8(std::string& out, uint32_t cp) {
+    if (cp < 0x80) {
+        out += static_cast<char>(cp);
+    } else if (cp < 0x800) {
+        out += static_cast<char>(0xC0 | (cp >> 6));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        out += static_cast<char>(0xE0 | (cp >> 12));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else {
+        out += static_cast<char>(0xF0 | (cp >> 18));
+        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    }
+}
+
+// Parse n hex digits from sv[pos] and return the codepoint, or -1 on failure.
+static int32_t parseHexN(std::string_view sv, size_t pos, size_t n) {
+    if (pos + n > sv.size()) return -1;
+    uint32_t cp = 0;
+    for (size_t i = 0; i < n; ++i) {
+        char h = sv[pos + i];
+        if      (h >= '0' && h <= '9') cp = cp * 16 + static_cast<uint32_t>(h - '0');
+        else if (h >= 'a' && h <= 'f') cp = cp * 16 + static_cast<uint32_t>(h - 'a' + 10);
+        else if (h >= 'A' && h <= 'F') cp = cp * 16 + static_cast<uint32_t>(h - 'A' + 10);
+        else return -1;
+    }
+    return static_cast<int32_t>(cp);
+}
+
+// Append sv to out as text-mode LaTeX (inside \text{...}), handling:
+//   \[Name]   → wlCharToLatex; \command wrapped in $...$; \unicode{X} → UTF-8
+//   \:XXXX    → UTF-8 decode (4-digit hex codepoint)
+//   \.XX      → UTF-8 decode (2-digit hex, Latin-1 range)
+//   high bytes (>0x7F) → skip (garbled Mathematica-internal encoding)
+//   LaTeX special chars → escaped
+static void appendWlTextContent(std::string& out, std::string_view sv) {
+    size_t i = 0;
+    while (i < sv.size()) {
+        unsigned char c = static_cast<unsigned char>(sv[i]);
+
+        // Skip garbled high bytes from Mathematica's internal encoding.
+        if (c > 127) { ++i; continue; }
+
+        // WL escape sequences starting with backslash
+        if (c == '\\' && i + 1 < sv.size()) {
+            char next = sv[i + 1];
+
+            // \[Name] — named WL character
+            if (next == '[') {
+                size_t end = sv.find(']', i + 2);
+                if (end != std::string_view::npos) {
+                    std::string_view tok = sv.substr(i, end - i + 1);
+                    auto m = wlCharToLatex(tok);
+                    if (m.data() != nullptr && !m.empty()) {
+                        if (m[0] == '\\') {
+                            // Check for \unicode{XXXX} — decode to UTF-8
+                            if (m.size() > 9 && m.substr(0, 9) == "\\unicode{") {
+                                size_t hexEnd = m.find('}', 9);
+                                if (hexEnd != std::string_view::npos) {
+                                    int32_t cp = parseHexN(m, 9, hexEnd - 9);
+                                    if (cp >= 0) appendCodepointUtf8(out, static_cast<uint32_t>(cp));
+                                    else { out += '$'; out += m; if (!out.empty() && out.back() == ' ') out.pop_back(); out += '$'; }
+                                }
+                            } else {
+                                // Regular LaTeX command (e.g. \Omega) — wrap in $...$
+                                out += '$';
+                                out += m;
+                                if (!out.empty() && out.back() == ' ') out.pop_back();  // strip guard space
+                                out += '$';
+                            }
+                        } else {
+                            out += m;  // plain UTF-8 char or operator
+                        }
+                    }
+                    // Unknown named char → silently skip (avoids garbage in labels)
+                    i = end + 1;
+                    continue;
+                }
+            }
+
+            // \:XXXX — 4-digit Unicode hex escape
+            if (next == ':') {
+                int32_t cp = parseHexN(sv, i + 2, 4);
+                if (cp >= 0) {
+                    appendCodepointUtf8(out, static_cast<uint32_t>(cp));
+                    i += 6;
+                    continue;
+                }
+            }
+
+            // \.XX — 2-digit hex escape (Latin-1 range U+00..U+FF)
+            if (next == '.') {
+                int32_t cp = parseHexN(sv, i + 2, 2);
+                if (cp >= 0) {
+                    appendCodepointUtf8(out, static_cast<uint32_t>(cp));
+                    i += 4;
+                    continue;
+                }
+            }
+        }
+
+        // LaTeX special characters that must be escaped inside \text{}
+        switch (c) {
+            case '_': out += "\\_";               break;
+            case '^': out += "\\^{}";             break;
+            case '$': out += "\\$";               break;
+            case '%': out += "\\%";               break;
+            case '&': out += "\\&";               break;
+            case '#': out += "\\#";               break;
+            case '{': out += "\\{";               break;
+            case '}': out += "\\}";               break;
+            case '~': out += "\\textasciitilde{}"; break;
+            default:  out += static_cast<char>(c); break;
+        }
+        ++i;
+    }
+}
+
+// ----------------------------------------------------------
 // BoxTranslator — stateful per-call translator
 // ----------------------------------------------------------
 class BoxTranslator {
@@ -306,6 +432,7 @@ private:
                 for (char c : s) {
                     if      (c == '`') result_ += "$\\grave{ }$";
                     else if (c == '^') result_ += "${}^{\\wedge}$";
+                    else if (c == '$') result_ += "\\$";
                     else               result_ += c;
                 }
                 result_ += '}';
@@ -411,6 +538,7 @@ private:
                         for (char c : s) {
                             if      (c == '`') result_ += "$\\grave{ }$";
                             else if (c == '^') result_ += "${}^{\\wedge}$";
+                            else if (c == '$') result_ += "\\$";
                             else               result_ += c;
                         }
                         result_ += '}';
@@ -441,18 +569,7 @@ private:
                         result_ += ' ';
                 } else {
                     result_ += "\\text{";
-                    for (char c : inner) {
-                        if      (c == '_') result_ += "\\_";
-                        else if (c == '^') result_ += "\\^{}";
-                        else if (c == '$') result_ += "\\$";
-                        else if (c == '%') result_ += "\\%";
-                        else if (c == '&') result_ += "\\&";
-                        else if (c == '#') result_ += "\\#";
-                        else if (c == '{') result_ += "\\{";
-                        else if (c == '}') result_ += "\\}";
-                        else if (c == '~') result_ += "\\textasciitilde{}";
-                        else               result_ += c;
-                    }
+                    appendWlTextContent(result_, inner);
                     result_ += '}';
                 }
             }
@@ -472,32 +589,55 @@ private:
                 result_ += ' ';
             return;
         }
-        // String may embed one or more \[Name] sequences mixed with plain text
-        // e.g. "\[CapitalSigma]n" or "\[Alpha]\[Beta]".  Scan and translate.
-        if (stripped.find("\\[") != std::string_view::npos) {
+        // String may embed one or more \[Name] or \:XXXX sequences mixed with plain text
+        // e.g. "\[CapitalSigma]n" or "\:03a9" or "\[Alpha]\[Beta]".  Scan and translate.
+        if (stripped.find("\\[") != std::string_view::npos ||
+            stripped.find("\\:") != std::string_view::npos ||
+            stripped.find("\\.") != std::string_view::npos) {
             size_t i = 0;
             while (i < stripped.size()) {
-                if (stripped[i] == '\\' && i + 1 < stripped.size() && stripped[i+1] == '[') {
-                    size_t end = stripped.find(']', i + 2);
-                    if (end != std::string_view::npos) {
-                        std::string_view tok = stripped.substr(i, end - i + 1);
-                        auto m = wlCharToLatex(tok);
-                        if (m.data() != nullptr) {
-                            result_ += m;
-                            // If the command ends with a letter, insert a
-                            // guard space when the next char in this string
-                            // is also a letter OR when we're at the end of
-                            // the string (the next RowBox sibling may start
-                            // with a letter, e.g. \intop + f → \intop f).
-                            if (!m.empty() && std::isalpha(static_cast<unsigned char>(m.back()))
-                                && (end + 1 >= stripped.size()
-                                    || std::isalpha(static_cast<unsigned char>(stripped[end + 1]))))
-                                result_ += ' ';
-                        } else {
-                            result_ += tok; // unknown named char — emit verbatim
+                if (stripped[i] == '\\' && i + 1 < stripped.size()) {
+                    char next = stripped[i + 1];
+                    if (next == '[') {
+                        size_t end = stripped.find(']', i + 2);
+                        if (end != std::string_view::npos) {
+                            std::string_view tok = stripped.substr(i, end - i + 1);
+                            auto m = wlCharToLatex(tok);
+                            if (m.data() != nullptr) {
+                                result_ += m;
+                                // If the command ends with a letter, insert a
+                                // guard space when the next char in this string
+                                // is also a letter OR when we're at the end of
+                                // the string (the next RowBox sibling may start
+                                // with a letter, e.g. \intop + f → \intop f).
+                                if (!m.empty() && std::isalpha(static_cast<unsigned char>(m.back()))
+                                    && (end + 1 >= stripped.size()
+                                        || std::isalpha(static_cast<unsigned char>(stripped[end + 1]))))
+                                    result_ += ' ';
+                            } else {
+                                result_ += tok; // unknown named char — emit verbatim
+                            }
+                            i = end + 1;
+                            continue;
                         }
-                        i = end + 1;
-                        continue;
+                    }
+                    // \:XXXX — Unicode hex escape; emit as UTF-8 (works in KaTeX math mode)
+                    if (next == ':') {
+                        int32_t cp = parseHexN(stripped, i + 2, 4);
+                        if (cp >= 0) {
+                            appendCodepointUtf8(result_, static_cast<uint32_t>(cp));
+                            i += 6;
+                            continue;
+                        }
+                    }
+                    // \.XX — 2-digit hex escape
+                    if (next == '.') {
+                        int32_t cp = parseHexN(stripped, i + 2, 2);
+                        if (cp >= 0) {
+                            appendCodepointUtf8(result_, static_cast<uint32_t>(cp));
+                            i += 4;
+                            continue;
+                        }
                     }
                 }
                 char c = stripped[i++];
@@ -521,8 +661,8 @@ private:
         if (stripped == "||")  { result_ += "\\lor ";    return; } // Or
         if (stripped == "!")   { result_ += "\\lnot ";   return; } // Not
         // WL Association brackets
-        if (stripped == "<|")  { result_ += "\\langle\\!\\!|"; return; }
-        if (stripped == "|>")  { result_ += "|\\!\\!\\rangle"; return; }
+        if (stripped == "<|")  { result_ += "\\langle|"; return; }
+        if (stripped == "|>")  { result_ += "|\\rangle"; return; }
         // Big-O order symbol (appears in SeriesData output as the bare string "O")
         if (stripped == "O")   { result_ += "\\mathcal{O}"; return; }
         // WL relational operators that map to single LaTeX symbols
@@ -530,6 +670,9 @@ private:
         if (stripped == "!=")  { result_ += "\\neq ";    return; }
         if (stripped == ">=")  { result_ += "\\geq ";    return; }
         if (stripped == "<=")  { result_ += "\\leq ";    return; }
+        // Raw multiplication sign U+00D7 (UTF-8 \xc3\x97) — appears in
+        // ScientificForm output as \[Times]; emit as \times in math mode.
+        if (stripped == "\xc3\x97" || stripped == "\xd7") { result_ += "\\times "; return; }
         // Bare underscore (WL Blank pattern) — escape it in LaTeX math
         if (stripped == "_")   { result_ += "\\_";       return; }
         // WL Slot: #, #1, #2, ... — pure function argument placeholder
@@ -590,8 +733,14 @@ private:
                     break;
                 }
                 for (char c : stripped) {
-                    if (c == '_') result_ += "\\_";
-                    else          result_ += c;
+                    if      (c == '_') result_ += "\\_";
+                    else if (c == '$') result_ += "\\$";
+                    else if (c == '%') result_ += "\\%";
+                    else if (c == '&') result_ += "\\&";
+                    else if (c == '#') result_ += "\\#";
+                    else if (c == '{') result_ += "\\{";
+                    else if (c == '}') result_ += "\\}";
+                    else               result_ += c;
                 }
                 break;
             case TokenClass::MultiLetter: {
@@ -634,7 +783,16 @@ private:
                     result_ += oit->second;
                 } else {
                     result_ += "\\mathrm{";
-                    result_ += stripped;
+                    for (char c : stripped) {
+                        if      (c == '$') result_ += "\\$";
+                        else if (c == '_') result_ += "\\_";
+                        else if (c == '%') result_ += "\\%";
+                        else if (c == '&') result_ += "\\&";
+                        else if (c == '#') result_ += "\\#";
+                        else if (c == '{') result_ += "\\{";
+                        else if (c == '}') result_ += "\\}";
+                        else               result_ += c;
+                    }
                     result_ += '}';
                 }
                 break;
@@ -1405,7 +1563,6 @@ private:
 
         if (tag == "Null") return;  // suppress
 
-        // Piecewise: the body should be a GridBox
         if (tag == "Piecewise") {
             const Node& body = pr_.node(pr_.children[a]);
             if (body.isExpr() && pr_.headName(body) == "GridBox") {
@@ -1860,8 +2017,31 @@ private:
         }
     }
 
+    // Emit a run of plain text characters (no ^ or _) inside math mode.
+    // Wraps in \text{…}, escaping LaTeX special characters.
+    void emitInfoPlainText(std::string_view seg) {
+        if (seg.empty()) return;
+        result_ += "\\text{";
+        for (char c : seg) {
+            switch (c) {
+                case '"':  break;   // strip stray WL string quotes
+                case '#':  result_ += "\\#"; break;
+                case '%':  result_ += "\\%"; break;
+                case '&':  result_ += "\\&"; break;
+                case '{':  result_ += "\\{"; break;
+                case '}':  result_ += "\\}"; break;
+                case '$':  result_ += "\\$"; break;
+                case '\\': result_ += "\\textbackslash{}"; break;
+                default:   result_ += c;
+            }
+        }
+        result_ += '}';
+    }
+
     // Emit a plain-text segment (inside \begin{array}{l}, i.e. in math mode),
-    // escaping LaTeX special characters.  Newline (0x0a) → \\ row break.
+    // treating ^ and _ followed by {…} or a single char as math super/subscript
+    // operators so that e.g. q^{B,up} and theta_k render correctly in KaTeX.
+    // Newline (0x0a) → \\ row break.
     void appendInfoText(std::string_view text) {
         size_t i = 0;
         while (i < text.size()) {
@@ -1870,29 +2050,45 @@ private:
                 ++i;
                 continue;
             }
-            // Accumulate plain segment up to next \n
+            // Gather plain segment up to next \n, ^ or _
             size_t j = i;
-            while (j < text.size() && text[j] != '\n') ++j;
-            if (j > i) {
-                result_ += "\\text{";
-                for (size_t k = i; k < j; ++k) {
-                    char c = text[k];
-                    switch (c) {
-                        case '"':  break;   // strip stray WL string quotes
-                        case '#':  result_ += "\\#"; break;
-                        case '%':  result_ += "\\%"; break;
-                        case '&':  result_ += "\\&"; break;
-                        case '_':  result_ += "\\_ "; break;
-                        case '{':  result_ += "\\{"; break;
-                        case '}':  result_ += "\\}"; break;
-                        case '$':  result_ += "\\$"; break;
-                        case '\\': result_ += "\\textbackslash{}"; break;
-                        default:   result_ += c;
-                    }
-                }
-                result_ += '}';
+            while (j < text.size() && text[j] != '\n' &&
+                   text[j] != '^' && text[j] != '_') {
+                ++j;
             }
-            i = j;
+            if (j > i) emitInfoPlainText(text.substr(i, j - i));
+            if (j >= text.size() || text[j] == '\n') { i = j; continue; }
+
+            // At ^ or _: emit as math super/subscript operator
+            char op = text[j++];
+            result_ += op;
+            if (j < text.size() && text[j] == '{') {
+                // grouped argument — find matching }
+                size_t argStart = j + 1;
+                int depth = 1;
+                size_t k = argStart;
+                while (k < text.size() && depth > 0) {
+                    if      (text[k] == '{') { ++depth; ++k; }
+                    else if (text[k] == '}') { --depth; ++k; }
+                    else ++k;
+                }
+                result_ += '{';
+                emitInfoPlainText(text.substr(argStart, (k - 1) - argStart));
+                result_ += '}';
+                i = k;
+            } else if (j < text.size() && text[j] != ' ' && text[j] != '\n') {
+                // single-character argument
+                result_ += '{';
+                emitInfoPlainText(text.substr(j, 1));
+                result_ += '}';
+                i = j + 1;
+            } else {
+                // ^ or _ not followed by an argument — emit literally in text
+                result_ += "\\text{";
+                result_ += op;
+                result_ += '}';
+                i = j;
+            }
         }
     }
 
