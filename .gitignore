@@ -25,3 +25,6 @@ _test_*.js
 # --- Logs ---
 *.log
 src/native/build_version.h
+
+# Internal AI agent reference
+AGENTS.md
