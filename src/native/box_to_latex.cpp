@@ -252,8 +252,16 @@ static void appendWlTextContent(std::string& out, std::string_view sv) {
     while (i < sv.size()) {
         unsigned char c = static_cast<unsigned char>(sv[i]);
 
-        // Skip garbled high bytes from Mathematica's internal encoding.
-        if (c > 127) { ++i; continue; }
+        // Non-ASCII byte: start of a multi-byte UTF-8 sequence (or an isolated
+        // continuation byte from malformed UTF-8 which we skip).
+        // Valid UTF-8 sequences are passed verbatim — KaTeX \text{} accepts them.
+        if (c >= 0xC0) {
+            size_t seqLen = (c >= 0xF0) ? 4u : (c >= 0xE0) ? 3u : 2u;
+            size_t seqEnd = std::min(i + seqLen, sv.size());
+            while (i < seqEnd) { out += static_cast<char>(sv[i++]); }
+            continue;
+        }
+        if (c >= 0x80) { ++i; continue; }  // isolated continuation byte — skip
 
         // WL escape sequences starting with backslash
         if (c == '\\' && i + 1 < sv.size()) {
@@ -275,8 +283,13 @@ static void appendWlTextContent(std::string& out, std::string_view sv) {
                                     if (cp >= 0) appendCodepointUtf8(out, static_cast<uint32_t>(cp));
                                     else { out += '$'; out += m; if (!out.empty() && out.back() == ' ') out.pop_back(); out += '$'; }
                                 }
+                            } else if (m.size() >= 7 && m.substr(0, 6) == "\\text{" && m.back() == '}') {
+                                // Already a text-mode construct (e.g. \text{\' e} for é).
+                                // We're already inside \text{} context, so strip the wrapper
+                                // and emit the inner content directly — avoids $\text{...}$.
+                                out += m.substr(6, m.size() - 7);
                             } else {
-                                // Regular LaTeX command (e.g. \Omega) — wrap in $...$
+                                // Math-mode command (e.g. \pi, \Omega) — wrap in $...$
                                 out += '$';
                                 out += m;
                                 if (!out.empty() && out.back() == ' ') out.pop_back();  // strip guard space
@@ -311,6 +324,10 @@ static void appendWlTextContent(std::string& out, std::string_view sv) {
                     continue;
                 }
             }
+
+            // WL string newline/tab/CR escapes — render as spaces in \text{}
+            if (next == 'n' || next == 'r') { i += 2; out += ' '; continue; }
+            if (next == 't')               { i += 2; out += ' '; continue; }
         }
 
         // LaTeX special characters that must be escaped inside \text{}
