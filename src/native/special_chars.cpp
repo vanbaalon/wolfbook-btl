@@ -161,6 +161,8 @@ const std::unordered_map<std::string_view, std::string_view> kTable {
     {"\\[ClubSuit]",                                "\\clubsuit"},
     {"\\[CommandKey]",                              "\\fbox{CMD}"},
     {"\\[Congruent]",                               "\\equiv"},
+    {"\\[Conjugate]",                               "{}^{*}"},
+    {"\\[ConjugateTranspose]",                      "{}^{\\dagger}"},
     {"\\[ConstantC]",                               "c"},
     {"\\[Continuation]",                            "\\text{Null}"},
     {"\\[ContourIntegral]",                         "\\oint"},
@@ -314,6 +316,7 @@ const std::unordered_map<std::string_view, std::string_view> kTable {
     {"\\[Exists]",                                  "\\exists"},
     {"\\[ExponentialE]",                            "\\mathrm{e}"},
     {"\\[FiLigature]",                              "fi"},
+    {"\\[Function]",                                "\\mapsto"},
     {"\\[FilledCircle]",                            "\\bullet"},
     {"\\[FilledDiamond]",                           "\\blacklozenge"},
     {"\\[FilledDownTriangle]",                      "\\blacktriangledown"},
@@ -608,6 +611,7 @@ const std::unordered_map<std::string_view, std::string_view> kTable {
     {"\\[LeftCeiling]",                             "\\lceil"},
     {"\\[LeftFloor]",                               "\\lfloor"},
     {"\\[LeftGuillemet]",                           "\\langle\\langle"},
+    {"\\[LeftSkeleton]",                            "\\langle\\!\\langle"},
     {"\\[LeftModified]",                            "["},
     {"\\[LeftPointer]",                             "\\blacktriangleleft"},
     {"\\[LeftRightArrow]",                          "\\leftrightarrow"},
@@ -721,6 +725,7 @@ const std::unordered_map<std::string_view, std::string_view> kTable {
     {"\\[RightCeiling]",                            "\\rceil"},
     {"\\[RightFloor]",                              "\\rfloor"},
     {"\\[RightGuillemet]",                          "\\rangle\\rangle"},
+    {"\\[RightSkeleton]",                           "\\rangle\\!\\rangle"},
     {"\\[RightModified]",                           "]"},
     {"\\[RightPointer]",                            "\\blacktriangleright"},
     {"\\[RightTee]",                                "\\vdash"},
@@ -857,6 +862,7 @@ const std::unordered_map<std::string_view, std::string_view> kTable {
     {"\\[Trademark]",                               "{}^{TM}"},
     {"\\[Transpose]",                               "\\intercal"},
     {"\\[TripleDot]",                               "..."},
+    {"\\[TwoWayRule]",                              "\\leftrightarrow"},
     {"\\[UAcute]",                                  "\\text{\\' u}"},
     {"\\[UDoubleAcute]",                            "\\text{\\H u}"},
     {"\\[UDoubleDot]",                              "\\text{\\\" u}"},
@@ -902,6 +908,7 @@ const std::unordered_map<std::string_view, std::string_view> kTable {
     {"\\[WolframLanguageLogo]",                     "\\unicode{f11e}"},
     {"\\[WolframLanguageLogoCircle]",               "\\unicode{f11f}"},
     {"\\[Xi]",                                      "\\xi"},
+
     {"\\[YAcute]",                                  "\\text{\\' y}"},
     {"\\[YDoubleDot]",                              "\\text{\\\" y}"},
     {"\\[Yen]",                                     "\\yen"},
@@ -978,6 +985,15 @@ const std::unordered_map<std::string_view, std::string_view> kTable {
     {"\xe2\x86\x90",  "\\leftarrow"},// ← U+2190
     {"\xe2\x87\x92",  "\\Rightarrow"}, // ⇒ U+21D2
     {"\xe2\x87\x94",  "\\Leftrightarrow"}, // ⇔ U+21D4
+
+    // Wolfram PUA characters — emitted as raw UTF-8 in some kernel builds
+    // Codepoints verified via ToCharacterCode["\[Name]"] in WL 3
+    {"\xef\x9d\xa1",  "\\langle\\!\\langle"},  // \[LeftSkeleton]       U+F761
+    {"\xef\x9d\xa2",  "\\rangle\\!\\rangle"},  // \[RightSkeleton]      U+F762
+    {"\xef\x8f\x88",  "{}^{*}"},               // \[Conjugate]          U+F3C8
+    {"\xef\x8f\x89",  "{}^{\\dagger}"},        // \[ConjugateTranspose] U+F3C9
+    {"\xef\x84\xa0",  "\\leftrightarrow"},     // \[TwoWayRule]         U+F120
+    {"\xef\x92\xa1",  "\\mapsto"},             // \[Function]           U+F4A1
 }; // end kTable
 
 // ----------------------------------------------------------

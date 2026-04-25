@@ -615,7 +615,7 @@ private:
                                         || std::isalpha(static_cast<unsigned char>(stripped[end + 1]))))
                                     result_ += ' ';
                             } else {
-                                result_ += tok; // unknown named char — emit verbatim
+                                result_ += "{\\square}"; // unknown WL char — □ placeholder
                             }
                             i = end + 1;
                             continue;
@@ -699,6 +699,23 @@ private:
             }
             result_ += '}';
             return;
+        }
+        // Safety net: Wolfram BMP Private-Use-Area chars not in kTable.
+        // BMP PUA: U+E000-U+EFFF → UTF-8 starts with 0xEE.
+        //          U+F000-U+F8FF → UTF-8 starts with 0xEF, second byte 0x80-0xA3.
+        // Standard Unicode (emoji U+1F..., math symbols, Greek, etc.) is NOT blocked
+        // and passes through as raw UTF-8 for KaTeX to render natively.
+        if (!stripped.empty()) {
+            unsigned char _c0 = static_cast<unsigned char>(stripped[0]);
+            bool _isPUA = (_c0 == 0xEE);
+            if (!_isPUA && _c0 == 0xEF && stripped.size() >= 2) {
+                unsigned char _c1 = static_cast<unsigned char>(stripped[1]);
+                _isPUA = (_c1 >= 0x80 && _c1 <= 0xA3);
+            }
+            if (_isPUA) {
+                result_ += "{\\square}";
+                return;
+            }
         }
         // Otherwise classify the (possibly stripped) plain string
         auto cls = classifyToken(stripped);
