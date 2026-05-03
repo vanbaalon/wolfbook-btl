@@ -309,6 +309,7 @@ const std::unordered_map<std::string_view, std::string_view> kTable {
     {"\\[EntityEnd]",                               "\\fbox{;}"},
     {"\\[EntityStart]",                             "\\fbox{\&}"},
     {"\\[Epsilon]",                                 "\\epsilon"},
+    {"\\[Equal]",                                   "="},
     {"\\[EscapeKey]",                               "\\fbox{ESC}"},
     {"\\[Eta]",                                     "\\eta"},
     {"\\[Eth]",                                     "\\eth"},
