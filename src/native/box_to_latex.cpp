@@ -484,7 +484,7 @@ private:
                     // "0``<accuracy>" → 0.×10^{-round(accuracy)}
                     double acc = parseDouble(accSv);
                     int    exp = static_cast<int>(std::round(acc));
-                    result_ += "0.{\\times}10^{-";
+                    result_ += "0.\\times 10^{-";
                     result_ += std::to_string(exp);
                     result_ += '}';
                     return;
@@ -521,7 +521,9 @@ private:
                     if (starPos != std::string_view::npos) {
                         std::string_view precSv = afterBt.substr(0, starPos);
                         std::string_view expSv  = afterBt.substr(starPos + 2);
-                        bool validPrec = !precSv.empty();
+                        // Empty precSv is OK: it means machine precision
+                        // (e.g. "3.14`*^-7") — use the prefix verbatim.
+                        bool validPrec = true;
                         for (char c : precSv)
                             if (!std::isdigit(static_cast<unsigned char>(c)) && c != '.')
                                 { validPrec = false; break; }
@@ -532,8 +534,9 @@ private:
                             if (!std::isdigit(static_cast<unsigned char>(expSv[i])))
                                 { validExp = false; break; }
                         if (validPrec && validExp) {
-                            // Truncate mantissa to stated precision sig figs.
-                            double prec = parseDouble(precSv);
+                            // Truncate mantissa to stated precision sig figs
+                            // (skip when precSv empty → machine precision).
+                            double prec = precSv.empty() ? 0.0 : parseDouble(precSv);
                             int nSig = (prec > 0.5) ? static_cast<int>(std::round(prec)) : 0;
                             std::string mantissa = (nSig > 0)
                                 ? truncateToSigFigs(prefix, nSig)
@@ -980,9 +983,12 @@ private:
                 if (ni.isString() || ni.isSymbol()) {
                     std::string_view sv = pr_.str(ni);
                     if (sv.empty()) continue;
-                    // Skip WL invisible/no-break chars (they translate to "")
-                    std::string_view lx = wlCharToLatex(sv);
-                    if (lx.data() != nullptr && lx.empty()) continue;
+                    // Only WL named chars ("\[…]") can map to the empty
+                    // string; skip the table lookup for plain literals.
+                    if (sv.size() > 2 && sv[0] == '\\' && sv[1] == '[') {
+                        std::string_view lx = wlCharToLatex(sv);
+                        if (lx.data() != nullptr && lx.empty()) continue;
+                    }
                 }
                 if (neCnt < 4) ne[neCnt] = i;
                 ++neCnt;
@@ -1162,13 +1168,22 @@ private:
             if (s == "'") return 1;
             // Comma notation: "," = 1 prime, ",," = 2, ",,," = 3, etc.
             if (!s.empty() && s.find_first_not_of(',') == std::string_view::npos) return (int)s.size();
+            // Count repeated \[Prime] markers in a single string: "\[Prime]\[Prime]" → 2
+            if (s.find("\\[Prime]") != std::string_view::npos) {
+                int cnt = 0;
+                for (size_t i = 0; (i = s.find("\\[Prime]", i)) != std::string_view::npos; i += 8)
+                    cnt++;
+                if (cnt > 0) return cnt;
+            }
+            // Count repeated single-quote markers: "''" → 2, "'''" → 3, etc.
+            if (!s.empty() && s.find_first_not_of('\'') == std::string_view::npos) return (int)s.size();
             return 0;
         }
         if (n.kind == NodeKind::Expr) {
+            // Must have at least a head before reading children[start]
+            if (n.childrenCount < 2) return 0;
             std::string_view head = pr_.str(pr_.node(pr_.children[n.childrenStart]));
             if (head != "RowBox") return 0;
-            // RowBox[{children...}] — check the List argument
-            if (n.childrenCount < 2) return 0;
             const Node& listNode = pr_.node(pr_.children[n.childrenStart + 1]);
             if (listNode.kind != NodeKind::List) return 0;
             int total = 0;
@@ -1247,11 +1262,21 @@ private:
 
         std::string base = translateToString(pr_.children[a]);
         std::string exp  = translateToString(pr_.children[a + 1]);
+        // Guard against double-superscript: if exp itself contains carets,
+        // wrap in double braces to prevent KaTeX parse error.
+        bool expHasCarets = (exp.find('^') != std::string::npos);
         if (baseNeedsBracing(base)) { result_ += '{'; result_ += base; result_ += '}'; }
         else result_ += base;
         result_ += '^';
-        if (needsBraces(exp)) { result_ += '{'; result_ += exp; result_ += '}'; }
-        else                  { result_ += exp; }
+        if (exp.empty()) {
+            result_ += "{}";
+        } else if (exp.size() == 1 && !expHasCarets) {
+            result_ += exp;
+        } else if (!expHasCarets) {
+            result_ += '{'; result_ += exp; result_ += '}';
+        } else {
+            result_ += "{{" + exp + "}}";
+        }
     }
 
     // ---- SubscriptBox[base, sub] ----
@@ -1280,8 +1305,15 @@ private:
         if (needsBraces(sub)) { result_ += '{'; result_ += sub; result_ += '}'; }
         else                  { result_ += sub; }
         result_ += '^';
-        if (needsBraces(sup)) { result_ += '{'; result_ += sup; result_ += '}'; }
-        else                  { result_ += sup; }
+        if (sup.empty()) {
+            result_ += "{}";
+        } else if (sup.size() == 1) {
+            result_ += sup;
+        } else if (sup.find('^') == std::string::npos) {
+            result_ += '{'; result_ += sup; result_ += '}';
+        } else {
+            result_ += "{{" + sup + "}}";
+        }
     }
 
     // ---- FractionBox[num, den] ----
@@ -1412,6 +1444,7 @@ private:
         bool italic      = false;
         bool underline   = false;
         bool showContents = true;
+        bool textMode    = false;  // wrap inner in \text{} (for Information[] usage text)
 
         for (uint32_t i = 1; i < n; ++i) {
             uint32_t optIdx = pr_.children[a + i];
@@ -1443,6 +1476,7 @@ private:
             if (opt.isString()) {
                 std::string_view sv = pr_.str(opt);
                 if (sv == "TI") italic = true;
+                if (sv == "InformationUsageText") textMode = true;
                 // "TR" is the default (roman) for multi-letter tokens — no flag needed
                 continue;
             }
@@ -1503,6 +1537,12 @@ private:
         }
         if (bold) {
             inner = "\\mathbf{" + inner + "}";
+        }
+        if (textMode && !italic && !bold && colorHex.empty() && !underline) {
+            // InformationUsageText: raw text context (function argument patterns
+            // like "args_", "args__").  Wrap in \text{} so underscores render
+            // as literal text underscores, not LaTeX subscript operators.
+            inner = "\\text{" + inner + "}";
         }
 
         result_ += inner;
@@ -2056,18 +2096,17 @@ private:
     void emitInfoPlainText(std::string_view seg) {
         if (seg.empty()) return;
         result_ += "\\text{";
-        for (char c : seg) {
-            switch (c) {
-                case '"':  break;   // strip stray WL string quotes
-                case '#':  result_ += "\\#"; break;
-                case '%':  result_ += "\\%"; break;
-                case '&':  result_ += "\\&"; break;
-                case '{':  result_ += "\\{"; break;
-                case '}':  result_ += "\\}"; break;
-                case '$':  result_ += "\\$"; break;
-                case '\\': result_ += "\\textbackslash{}"; break;
-                default:   result_ += c;
-            }
+        // Delegate to appendWlTextContent so that WL named-char escapes like
+        // \[Alpha], \[Lambda] etc. are translated to their LaTeX equivalents
+        // (e.g. \alpha, \lambda) rather than being emitted as \textbackslash{}.
+        // Strip stray WL string-quote characters first.
+        if (seg.find('"') != std::string_view::npos) {
+            std::string stripped;
+            stripped.reserve(seg.size());
+            for (char c : seg) if (c != '"') stripped += c;
+            appendWlTextContent(result_, stripped);
+        } else {
+            appendWlTextContent(result_, seg);
         }
         result_ += '}';
     }
@@ -2110,6 +2149,31 @@ private:
                 emitInfoPlainText(text.substr(argStart, (k - 1) - argStart));
                 result_ += '}';
                 i = k;
+            } else if (j < text.size() && text[j] == '\\' &&
+                       j + 1 < text.size() && text[j + 1] == '[') {
+                // WL named-char escape \[Name] after ^ or _ — consume as one atom
+                // so that e.g. u^\[Alpha] renders as u^{\alpha} not u^{\textbackslash{}}.
+                size_t end = text.find(']', j + 2);
+                if (end != std::string_view::npos) {
+                    std::string_view tok = text.substr(j, end - j + 1);
+                    auto m = wlCharToLatex(tok);
+                    result_ += '{';
+                    if (m.data() != nullptr && !m.empty()) {
+                        result_ += m;
+                        if (std::isalpha(static_cast<unsigned char>(m.back())))
+                            result_ += ' ';  // guard space for letter-ending commands
+                    } else {
+                        result_ += "\\square"; // unknown WL char
+                    }
+                    result_ += '}';
+                    i = end + 1;
+                } else {
+                    // No closing ] — fall back to single backslash
+                    result_ += '{';
+                    emitInfoPlainText(text.substr(j, 1));
+                    result_ += '}';
+                    i = j + 1;
+                }
             } else if (j < text.size() && text[j] != ' ' && text[j] != '\n') {
                 // single-character argument
                 result_ += '{';
@@ -2207,14 +2271,30 @@ private:
         // Superscript / Subscript template boxes (base + script)
         if ((tag == "Superscript" || tag == "SuperscriptBox") &&
             argListNode.isList() && argListNode.childrenCount >= 2) {
+            int primeCount = countPrimes(pr_.children[argListNode.childrenStart + 1]);
+            if (primeCount > 0) {
+                std::string base = translateToString(
+                    pr_.children[argListNode.childrenStart]);
+                if (baseNeedsBracing(base)) { result_ += '{'; result_ += base; result_ += '}'; }
+                else result_ += base;
+                for (int i = 0; i < primeCount; ++i) result_ += '\'';
+                return;
+            }
             std::string base = translateToString(
                 pr_.children[argListNode.childrenStart]);
             std::string exp  = translateToString(
                 pr_.children[argListNode.childrenStart + 1]);
+            // Guard against double-superscript: if exp itself contains superscripts,
+            // wrap the entire thing in braces to prevent KaTeX parse error.
+            bool expHasCarets = (exp.find('^') != std::string::npos);
             result_ += base;
-            result_ += (exp.size() == 1) ? "^" : "^{";
-            result_ += exp;
-            if (exp.size() != 1) result_ += '}';
+            if (exp.size() == 1 && !expHasCarets) {
+                result_ += '^'; result_ += exp;
+            } else if (!expHasCarets) {
+                result_ += "^{"; result_ += exp; result_ += '}';
+            } else {
+                result_ += "^{{" + exp + "}}";
+            }
             return;
         }
         if ((tag == "Subscript" || tag == "SubscriptBox") &&
@@ -2263,9 +2343,21 @@ private:
             }
         }
 
-        // Fallback: join args
-        std::fprintf(stderr, "[wolfbook] TemplateBox: unknown tag \"%.*s\"\n",
-                     static_cast<int>(tag.size()), tag.data());
+        // Fallback: join args (silent unless WOLFBOOK_BTL_VERBOSE=1)
+        {
+            static const bool sVerbose = []{
+                const char* e = std::getenv("WOLFBOOK_BTL_VERBOSE");
+                return e && e[0] == '1';
+            }();
+            if (sVerbose) {
+                static thread_local std::unordered_map<std::string, char> sSeen;
+                std::string key(tag);
+                if (sSeen.emplace(std::move(key), 1).second) {
+                    std::fprintf(stderr, "[wolfbook] TemplateBox: unknown tag \"%.*s\"\n",
+                                 static_cast<int>(tag.size()), tag.data());
+                }
+            }
+        }
         if (argListNode.isList()) {
             for (uint32_t i = 0; i < argListNode.childrenCount; ++i)
                 translate(pr_.children[argListNode.childrenStart + i]);
@@ -2369,8 +2461,22 @@ private:
 
     // ---- Fallback for unrecognised box heads ----
     void translateUnknownExpr(std::string_view head, uint32_t argStart, uint32_t argCount) {
-        std::fprintf(stderr, "[wolfbook] boxToLatex: unknown box head \"%.*s\"\n",
-                     static_cast<int>(head.size()), head.data());
+        // Verbose logging is opt-in (WOLFBOOK_BTL_VERBOSE=1) — synchronous
+        // stderr writes can dominate latency on outputs containing many
+        // unknown heads (Information[], exotic Graphics, …).  When enabled,
+        // each distinct head is logged only once per process.
+        static const bool sVerbose = []{
+            const char* e = std::getenv("WOLFBOOK_BTL_VERBOSE");
+            return e && e[0] == '1';
+        }();
+        if (sVerbose) {
+            static thread_local std::unordered_map<std::string, char> sSeen;
+            std::string key(head);
+            if (sSeen.emplace(std::move(key), 1).second) {
+                std::fprintf(stderr, "[wolfbook] boxToLatex: unknown box head \"%.*s\"\n",
+                             static_cast<int>(head.size()), head.data());
+            }
+        }
         for (uint32_t i = 0; i < argCount; ++i)
             translate(pr_.children[argStart + i]);
     }
@@ -2429,51 +2535,80 @@ private:
         fixDoubleScripts();
     }
 
-    // Repeatedly scan depth-0 ^ and _ positions; when two consecutive script
-    // operators share no base between them (argEnd[k-1] == scriptPos[k]),
-    // wrap [baseStart[k-1], scriptPos[k]) in braces so the second operator
-    // attaches to the group instead of directly to the base.
+    // Single-pass O(N) scan: collect all depth-0 script operators, then
+    // determine which ones need brace-wrapping in one go.  Insertions are
+    // applied right-to-left so prior offsets remain valid; the final string
+    // is built once.
+    //
+    // Wrapping rule: when two same-kind operators (^A^B or _A_B) appear with
+    // no base in between, wrap [baseStart_k-1, scriptPos_k) in {…}.
+    // Mixed _A^B / ^A_B is valid LaTeX and left alone.
     void fixDoubleScripts() {
-        for (;;) {
-            struct Script { size_t baseStart, scriptPos, argEnd; char kind; };
-            std::vector<Script> ss;
+        struct Script { size_t baseStart, scriptPos, argEnd; char kind; };
+        // Reused thread-local buffer to avoid re-allocation across calls.
+        thread_local std::vector<Script> ss;
+        ss.clear();
 
-            int depth = 0;
-            for (size_t i = 0; i < result_.size(); ++i) {
-                char c = result_[i];
-                if      (c == '{') { ++depth; continue; }
-                else if (c == '}') { if (depth > 0) --depth; continue; }
-                if (depth != 0 || (c != '^' && c != '_')) continue;
-
-                Script s;
-                s.scriptPos = i;
-                s.kind      = c;
-                s.baseStart = scanAtomBackward(result_, i);
-                s.argEnd    = skipAtomForward(result_, i + 1);
-                ss.push_back(s);
-            }
-
-            bool fixed = false;
-            for (size_t k = 1; k < ss.size() && !fixed; ++k) {
-                // Only a double-script error when the SAME operator repeats
-                // with no base in between (^A^B or _A_B).
-                // Mixed _A^B or ^A_B is valid LaTeX (sub + super on same atom).
-                if (ss[k].kind == ss[k-1].kind &&
-                    ss[k].scriptPos == ss[k-1].argEnd) {
-                    std::string out;
-                    out.reserve(result_.size() + 2);
-                    out.append(result_, 0, ss[k-1].baseStart);
-                    out += '{';
-                    out.append(result_, ss[k-1].baseStart,
-                               ss[k].scriptPos - ss[k-1].baseStart);
-                    out += '}';
-                    out.append(result_, ss[k].scriptPos, std::string::npos);
-                    result_ = std::move(out);
-                    fixed = true;
-                }
-            }
-            if (!fixed) break;
+        int depth = 0;
+        for (size_t i = 0; i < result_.size(); ++i) {
+            char c = result_[i];
+            if      (c == '{') { ++depth; continue; }
+            else if (c == '}') { if (depth > 0) --depth; continue; }
+            if (depth != 0 || (c != '^' && c != '_')) continue;
+            // Skip escaped \_ and \^ — these are literal chars, not script operators.
+            if (i > 0 && result_[i-1] == '\\') continue;
+            Script s;
+            s.scriptPos = i;
+            s.kind      = c;
+            s.baseStart = scanAtomBackward(result_, i);
+            s.argEnd    = skipAtomForward(result_, i + 1);
+            ss.push_back(s);
         }
+
+        // Walk maximal runs of same-kind, edge-adjacent scripts.
+        // A run [s..e] of length L+1 (e>s) requires L brace pairs that
+        // nest left-to-right:  {…{{base^A}^B}^C}…  →  insert L `{`s at
+        // baseStart of ss[s] and one `}` at scriptPos of ss[s+i], i∈[1..L].
+        struct Wrap { size_t pos; char ch; };
+        thread_local std::vector<Wrap> ins;
+        ins.clear();
+        size_t k = 0;
+        while (k < ss.size()) {
+            size_t s = k;
+            size_t e = k;
+            while (e + 1 < ss.size() &&
+                   ss[e + 1].kind == ss[e].kind &&
+                   ss[e + 1].scriptPos == ss[e].argEnd) {
+                ++e;
+            }
+            const size_t runLen = e - s; // number of brace pairs
+            if (runLen > 0) {
+                for (size_t i = 0; i < runLen; ++i)
+                    ins.push_back({ss[s].baseStart, '{'});
+                for (size_t i = 1; i <= runLen; ++i)
+                    ins.push_back({ss[s + i].scriptPos, '}'});
+            }
+            k = e + 1;
+        }
+        if (ins.empty()) return;
+
+        // Sort ascending so a forward rebuild produces correct output.
+        // For ties, '{' goes before '}' so brace pairs nest correctly.
+        std::sort(ins.begin(), ins.end(), [](const Wrap& a, const Wrap& b){
+            if (a.pos != b.pos) return a.pos < b.pos;
+            return a.ch == '{' && b.ch == '}';
+        });
+        std::string out;
+        out.reserve(result_.size() + ins.size());
+        size_t cursor = 0;
+        for (auto& w : ins) {
+            if (w.pos > cursor) out.append(result_, cursor, w.pos - cursor);
+            out += w.ch;
+            cursor = w.pos;
+        }
+        if (cursor < result_.size())
+            out.append(result_, cursor, result_.size() - cursor);
+        result_ = std::move(out);
     }
 };
 
@@ -2489,41 +2624,54 @@ BoxResult boxToLatex(std::string_view wlBoxString, const BtlOptions& opts) {
     thread_local ParseResult  tl_pr;
 
     try {
-        // Strip WL line-continuation sequences (backslash + newline + leading
-        // whitespace) that appear when input is pasted from a WL session or
-        // copied across multiple lines.  Also collapse bare newlines to spaces.
-        tl_clean.clear();
-        tl_clean.reserve(wlBoxString.size());
-        for (std::size_t i = 0; i < wlBoxString.size(); ) {
-            char c = wlBoxString[i];
-            if (c == '\\' && i + 1 < wlBoxString.size() &&
-                (wlBoxString[i+1] == '\n' || wlBoxString[i+1] == '\r')) {
-                // Skip backslash + newline + any leading whitespace on next line
-                i += 2;
-                if (i < wlBoxString.size() && wlBoxString[i] == '\n') ++i; // \r\n
-                while (i < wlBoxString.size() &&
-                       (wlBoxString[i] == ' ' || wlBoxString[i] == '\t')) ++i;
-                continue;
-            }
-            if (c == '\n' || c == '\r') {
-                // Bare newline (no backslash) — collapse to single space
-                tl_clean += ' ';
+        // Fast path: most inputs have no newlines at all — skip the
+        // byte-by-byte cleaning loop and parse the input directly.
+        bool needsClean = false;
+        for (char c : wlBoxString) {
+            if (c == '\n' || c == '\r') { needsClean = true; break; }
+        }
+        std::string_view src;
+        if (!needsClean) {
+            src = wlBoxString;
+        } else {
+            // Strip WL line-continuation sequences (backslash + newline +
+            // leading whitespace) and collapse bare newlines to spaces.
+            tl_clean.clear();
+            tl_clean.reserve(wlBoxString.size());
+            for (std::size_t i = 0; i < wlBoxString.size(); ) {
+                char c = wlBoxString[i];
+                if (c == '\\' && i + 1 < wlBoxString.size() &&
+                    (wlBoxString[i+1] == '\n' || wlBoxString[i+1] == '\r')) {
+                    i += 2;
+                    if (i < wlBoxString.size() && wlBoxString[i] == '\n') ++i;
+                    while (i < wlBoxString.size() &&
+                           (wlBoxString[i] == ' ' || wlBoxString[i] == '\t')) ++i;
+                    continue;
+                }
+                if (c == '\n' || c == '\r') {
+                    tl_clean += ' ';
+                    ++i;
+                    if (c == '\r' && i < wlBoxString.size() && wlBoxString[i] == '\n') ++i;
+                    while (i < wlBoxString.size() &&
+                           (wlBoxString[i] == ' ' || wlBoxString[i] == '\t')) ++i;
+                    continue;
+                }
+                tl_clean += c;
                 ++i;
-                if (c == '\r' && i < wlBoxString.size() && wlBoxString[i] == '\n') ++i;
-                // skip subsequent whitespace
-                while (i < wlBoxString.size() &&
-                       (wlBoxString[i] == ' ' || wlBoxString[i] == '\t')) ++i;
-                continue;
             }
-            tl_clean += c;
-            ++i;
+            src = tl_clean;
         }
         tl_pr.reset();
-        WLParser{}.parseInto(tl_clean, tl_pr);
+        WLParser{}.parseInto(src, tl_pr);
         return BoxTranslator(tl_pr, opts).run();
     } catch (const std::exception& ex) {
         std::string msg = ex.what();
-        std::fprintf(stderr, "[wolfbook] boxToLatex parse error: %s\n", msg.c_str());
+        static const bool sVerbose = []{
+            const char* e = std::getenv("WOLFBOOK_BTL_VERBOSE");
+            return e && e[0] == '1';
+        }();
+        if (sVerbose)
+            std::fprintf(stderr, "[wolfbook] boxToLatex parse error: %s\n", msg.c_str());
         return { std::string(wlBoxString), std::move(msg), {} };
     }
 }
