@@ -12,6 +12,10 @@
 #   ./build.sh smoke        quick Node.js smoke test of the addon
 #   ./build.sh generate     regenerate special_chars.cpp from Mathematica
 #                           (requires wolframscript; output is then committed)
+#   ./build.sh electron <ver>
+#                           build native against Electron headers (e.g. 39.8.8)
+#                           and deploy linux-x64 prebuilt to
+#                           wolfbook/wllatex-addon/prebuilt/
 # ==============================================================
 set -euo pipefail
 
@@ -77,6 +81,40 @@ build_ts() {
   step "Compiling TypeScript (src/)"
   node_modules/.bin/tsc -p tsconfig.json 2>&1 | sed 's/^/  /'
   ok "TypeScript compiled → out/"
+}
+
+build_native_electron() {
+  local VERSION="$1"
+  [ -n "$VERSION" ] || fail "build_native_electron: missing version arg (e.g. 39.8.8)"
+  step "Building C++ native addon for Electron $VERSION — linux x64"
+  local BTL_VER
+  BTL_VER=$(node -e "process.stdout.write(require('./package.json').version)")
+  local BTL_DATE
+  BTL_DATE=$(date -u '+%Y-%m-%d')
+  printf '#pragma once\n#define WOLFBOOK_BTL_VERSION "%s"\n#define WOLFBOOK_BTL_BUILD_DATE "%s"\n' "$BTL_VER" "$BTL_DATE" \
+      > src/native/build_version.h
+  node_modules/.bin/node-gyp rebuild \
+      --target="$VERSION" \
+      --dist-url=https://electronjs.org/headers \
+      --arch=x64 2>&1 | grep -v '^gyp info' | sed 's/^/  /'
+  ADDON="build/Release/wolfbook_btl.node"
+  [ -f "$ADDON" ] || fail "native addon not found at $ADDON after Electron $VERSION build"
+  SIZE=$(du -sh "$ADDON" | cut -f1)
+  ok "native addon (Electron $VERSION) built — $ADDON ($SIZE)"
+}
+
+deploy_linux_prebuilt() {
+  step "Deploying linux-x64 prebuilt"
+  local ADDON="$ROOT/build/Release/wolfbook_btl.node"
+  [ -f "$ADDON" ] || fail "deploy_linux_prebuilt: $ADDON missing — build first"
+  local PREBUILDS_DIR="$ROOT/prebuilds"
+  local EXT_PREBUILT_DIR="$ROOT/../wolfbook/wllatex-addon/prebuilt"
+  mkdir -p "$PREBUILDS_DIR"
+  cp -f "$ADDON" "$PREBUILDS_DIR/wolfbook_btl-linux-x64.node"
+  ok "Copied → $PREBUILDS_DIR/wolfbook_btl-linux-x64.node"
+  mkdir -p "$EXT_PREBUILT_DIR"
+  cp -f "$ADDON" "$EXT_PREBUILT_DIR/wolfbook_btl-linux-x64.node"
+  ok "Copied → $EXT_PREBUILT_DIR/wolfbook_btl-linux-x64.node"
 }
 
 smoke_test() {
@@ -169,8 +207,17 @@ case "$TARGET" in
     ok "special_chars.cpp regenerated"
     echo -e "  Run ${CYAN}./build.sh native${RESET} to recompile with the updated table."
     ;;
+  electron)
+    VERSION="${2:-}"
+    [ -n "$VERSION" ] || fail "Usage: $0 electron <electron-version> (e.g. 39.8.8)"
+    check_node
+    check_npm_deps
+    build_native_electron "$VERSION"
+    deploy_linux_prebuilt
+    echo -e "\n${GREEN}${BOLD}Electron $VERSION build deployed.${RESET}"
+    ;;
   *)
-    echo "Usage: $0 [all | native | ts | rebuild | clean | test | smoke | generate]"
+    echo "Usage: $0 [all | native | ts | rebuild | clean | test | smoke | generate | electron <version>]"
     exit 1
     ;;
 esac
