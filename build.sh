@@ -101,10 +101,22 @@ copy_to_ext() {
   if [ -f "$ADDON" ] && [ -d "$EXT_DEV_DIR" ]; then
     cp "$ADDON" "$EXT_DEV_DIR/wolfbook_btl.node"
     ok "Copied wolfbook_btl.node → Extension Development/wllatex-addon/"
-    # Also overwrite the platform-specific prebuilt so it isn't loaded in preference
+    # Also overwrite the platform-specific prebuilt the extension loads in preference.
+    # The extension resolves prebuilt/wolfbook_btl-<platform>-<arch>.node via process.arch,
+    # so we MUST write the prebuilt for THIS host's arch — a hardcoded name (e.g. arm64)
+    # leaves the loaded x64 prebuilt stale on Intel machines and vice-versa.
     if [ -d "$EXT_DEV_DIR/prebuilt" ]; then
-      cp "$ADDON" "$EXT_DEV_DIR/prebuilt/wolfbook_btl-darwin-arm64.node"
-      ok "Copied wolfbook_btl.node → Extension Development/wllatex-addon/prebuilt/wolfbook_btl-darwin-arm64.node"
+      local HOST_ARCH; HOST_ARCH=$(node -e 'process.stdout.write(process.arch)' 2>/dev/null || echo "")
+      case "$(uname -m)" in
+        arm64|aarch64) [ -z "$HOST_ARCH" ] && HOST_ARCH="arm64" ;;
+        x86_64|amd64)  [ -z "$HOST_ARCH" ] && HOST_ARCH="x64" ;;
+      esac
+      if [ -n "$HOST_ARCH" ]; then
+        cp "$ADDON" "$EXT_DEV_DIR/prebuilt/wolfbook_btl-darwin-$HOST_ARCH.node"
+        ok "Copied wolfbook_btl.node → Extension Development/wllatex-addon/prebuilt/wolfbook_btl-darwin-$HOST_ARCH.node"
+      else
+        warn "Could not determine host arch — prebuilt not updated (generic wolfbook_btl.node still refreshed)"
+      fi
     fi
   else
     warn "Extension dev folder not found — skipping auto-copy (expected: $EXT_DEV_DIR)"

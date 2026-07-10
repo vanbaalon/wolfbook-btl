@@ -147,6 +147,27 @@ EX: \cos^2\phi
 IN: SuperscriptBox[RowBox[{"(",RowBox[{"sin","(","t",")"}],")"}],"2"] | {"trigPowerForm": false}
 EX: \left(\sin t\right)^2
 
+# ── sech / csch — base form (Rule 1) ──────────────────────────────
+IN: RowBox[{"sech","(","\[Rho]",")"}]
+EX: \operatorname{sech}\rho
+
+IN: RowBox[{"csch","(","\[Chi]",")"}]
+EX: \operatorname{csch}\chi
+
+# ── sech / csch — power form (Rule 1b): kernel emits SuperscriptBox[trig,n] before "(" ──
+IN: RowBox[{SuperscriptBox["csch","2"],"(","\[Chi]",")"}]
+EX: \operatorname{csch}^2\chi
+
+IN: RowBox[{SuperscriptBox["sech","2"],"(","\[Rho]",")"}]
+EX: \operatorname{sech}^2\rho
+
+# same pattern for standard trig (Rule 1b)
+IN: RowBox[{SuperscriptBox["sin","2"],"(","t",")"}]
+EX: \sin^2 t
+
+IN: RowBox[{SuperscriptBox["sinh","2"],"(","\[Rho]",")"}]
+EX: \sinh^2\rho
+
 # ── Matrix from btl.log ────────────────────────────────────────────
 
 # 2×2 with trig entries (full matrix from sinh/cosh example)
@@ -157,3 +178,56 @@ EX:  \left(\begin{matrix}\sinh\rho \\\cosh\rho \end{matrix}  \right)
 
 IN: InterpretationBox[RowBox[{FractionBox["1","x"],"+",InterpretationBox[RowBox[{"O","(",SuperscriptBox[RowBox[{"(",FractionBox["1","x"],")"}],"2"],")"}],SeriesData[x,Infinity,{},2,2,1],Editable->False]}],SeriesData[x,Infinity,{1},1,2,1],Editable->False]
 EX: \frac{1}{x}+\mathcal{O}\left(\left(\frac{1}{x}\right)^2\right)
+
+# ── Machine-precision scientific notation: n`*^exp ────────────────
+IN: "3.141592653589793`*^-7"
+EX: 3.141592653589793\times 10^{-7}
+
+IN: "1.`*^10"
+EX: 1\times 10^{10}
+
+# ── InformationData / ?Symbol ─────────────────────────────────────
+# These boxes come from ?WBPrint (?Symbol) evaluation.
+# The InterpretationBox is intercepted in JS (renderer.js) before reaching BTL,
+# so BTL should never see it in practice.  These tests document BTL's raw handling
+# of the components — specifically that underscores in plain strings are escaped
+# correctly so KaTeX doesn't interpret them as subscripts.
+
+# Plain string with Blank patterns (one/two/three underscores) in a text context
+IN: StyleBox["args_","InformationUsageText"]
+EX: \text{args\_}
+
+IN: StyleBox["args__","InformationUsageText"]
+EX: \text{args\_\_}
+
+IN: StyleBox["args___","InformationUsageText"]
+EX: \text{args\_\_\_}
+
+# Pattern with head, e.g. WBPrint[args___]
+IN: StyleBox["WBPrint[args___]","InformationUsageText"]
+EX: \text{WBPrint[args\_\_\_]}
+
+# ── Root / AlgebraicNumber display box ─────────────────────────────────────
+# Root objects display as InterpretationBox[TooltipBox[FrameBox[…icon+number…],
+# TagBox[skeleton]], Root[…]]. The TooltipBox label (an elision skeleton
+# \[LeftSkeleton]1\[RightSkeleton]) and the DynamicBox icon/elider must NOT leak
+# into the output — only the numeric display remains.
+# Root display: TooltipBox skeleton + DynamicBox icon dropped, number kept
+IN: InterpretationBox[TooltipBox[FrameBox[RowBox[{DynamicBox[icon], StyleBox["0.0296", FontSize -> Smaller]}], Background -> GrayLevel[1], RoundingRadius -> 5], TagBox[RowBox[{"\[LeftSkeleton]", "1", "\[RightSkeleton]"}], Short[#1, 7] & ]], Root[238 - 7565*#1 + 6345*#1^3 & , 2, 0]]
+EX: 0.0296
+
+# Root inside a product with a fraction (the reported Lambda_S case, minimised)
+IN: RowBox[{FractionBox["47", "42"], " ", InterpretationBox[TooltipBox[FrameBox[RowBox[{DynamicBox[icon], StyleBox["3.02"]}]], TagBox[RowBox[{"\[LeftSkeleton]", "1", "\[RightSkeleton]"}], Short]], Root[x & , 3, 0]]}]
+EX: \frac{47}{42}\,3.02
+
+# ── Empty GraphicsBox spacer + row-break/"[" collision ─────────────────────
+# Column grids use StyleBox[GraphicsBox[{}, ImageSize->{n,0}]] as a zero-height
+# spacer between rows. It must render as an empty (dropped) row, not "[graphics]"
+# — a leading "[" after the row break "\\" is parsed as \\[dim] and breaks KaTeX.
+# Empty GraphicsBox spacer row is dropped (no [graphics], no \\[ collision)
+IN: TagBox[GridBox[{{"a"}, {StyleBox[GraphicsBox[{}, ImageSize -> {5, 0}], "CacheGraphics" -> False]}, {"b"}}], "Column"]
+EX: \begin{matrix}a\\b\end{matrix}
+
+# Non-empty GraphicsBox → collision-safe \text{[graphics]} placeholder (never bare "[")
+IN: TagBox[GridBox[{{"a"}, {GraphicsBox[{DiskBox[{0,0}]}]}, {"b"}}], "Column"]
+EX: \begin{matrix}a\\\text{[graphics]}\\b\end{matrix}

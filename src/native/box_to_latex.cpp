@@ -50,6 +50,7 @@ static std::string_view getTrigLatex(std::string_view s) {
         {"arccot","\\operatorname{arccot}"},{"arcsec","\\operatorname{arcsec}"},
         {"arccsc","\\operatorname{arccsc}"},
         {"sinh","\\sinh"},{"cosh","\\cosh"},{"tanh","\\tanh"},{"coth","\\coth"},
+        {"sech","\\operatorname{sech}"},{"csch","\\operatorname{csch}"},
         {"arcsinh","\\operatorname{arcsinh}"},{"arccosh","\\operatorname{arccosh}"},
         {"arctanh","\\operatorname{arctanh}"},
         // WL capitalised (StandardForm / InputForm function names)
@@ -59,6 +60,7 @@ static std::string_view getTrigLatex(std::string_view s) {
         {"ArcCot","\\operatorname{arccot}"},{"ArcSec","\\operatorname{arcsec}"},
         {"ArcCsc","\\operatorname{arccsc}"},
         {"Sinh","\\sinh"},{"Cosh","\\cosh"},{"Tanh","\\tanh"},{"Coth","\\coth"},
+        {"Sech","\\operatorname{sech}"},{"Csch","\\operatorname{csch}"},
         {"ArcSinh","\\operatorname{arcsinh}"},{"ArcCosh","\\operatorname{arccosh}"},
         {"ArcTanh","\\operatorname{arctanh}"},
     };
@@ -676,6 +678,11 @@ private:
         if (stripped == ":>")  { result_ += "\\mapsto "; return; }
         if (stripped == "|->") { result_ += "\\mapsto "; return; } // Function[{x},body] mapsto arrow
         if (stripped == "&")   { result_ += "\\& ";      return; } // pure-function ampersand
+        // NonCommutativeTimes — ** may appear as a single atom in box output
+        if (stripped == "**")  { result_ += "\\star ";   return; }
+        // Condition and TagSet operators — may appear as single atoms
+        if (stripped == "/;")  { result_ += "/;";        return; }
+        if (stripped == "/:")  { result_ += "/:";        return; }
         // WL logical/bitwise infix operators
         if (stripped == "&&")  { result_ += "\\land ";   return; } // And
         if (stripped == "||")  { result_ += "\\lor ";    return; } // Or
@@ -686,6 +693,8 @@ private:
         // Big-O order symbol (appears in SeriesData output as the bare string "O")
         if (stripped == "O")   { result_ += "\\mathcal{O}"; return; }
         // WL relational operators that map to single LaTeX symbols
+        if (stripped == "===") { result_ += "\\equiv ";   return; } // SameQ
+        if (stripped == "=!=") { result_ += "\\not\\equiv "; return; } // UnsameQ
         if (stripped == "==")  { result_ += '=';         return; }
         if (stripped == "!=")  { result_ += "\\neq ";    return; }
         if (stripped == ">=")  { result_ += "\\geq ";    return; }
@@ -791,6 +800,7 @@ private:
                     {"arcsin","\\arcsin"},{"arccos","\\arccos"},{"arctan","\\arctan"},
                     // Hyperbolic
                     {"sinh","\\sinh"},{"cosh","\\cosh"},{"tanh","\\tanh"},{"coth","\\coth"},
+                    {"sech","\\operatorname{sech}"},{"csch","\\operatorname{csch}"},
                     // Exp / log
                     {"exp","\\exp"},{"log","\\log"},{"ln","\\ln"},{"lg","\\lg"},
                     // Limits / bounds
@@ -808,6 +818,7 @@ private:
                     {"Sin","\\sin"},{"Cos","\\cos"},{"Tan","\\tan"},
                     {"Cot","\\cot"},{"Sec","\\sec"},{"Csc","\\csc"},
                     {"Sinh","\\sinh"},{"Cosh","\\cosh"},{"Tanh","\\tanh"},{"Coth","\\coth"},
+                    {"Sech","\\operatorname{sech}"},{"Csch","\\operatorname{csch}"},
                     {"ArcSin","\\arcsin"},{"ArcCos","\\arccos"},{"ArcTan","\\arctan"},
                     {"ArcCot","\\operatorname{arccot}"},{"ArcSec","\\operatorname{arcsec}"},{"ArcCsc","\\operatorname{arccsc}"},
                     {"ArcSinh","\\operatorname{arcsinh}"},{"ArcCosh","\\operatorname{arccosh}"},{"ArcTanh","\\operatorname{arctanh}"},
@@ -893,11 +904,13 @@ private:
         else if (head == "GridBox")             translateGridBox(argStart, argCount, "matrix");
         else if (head == "ButtonBox")           translateButtonBox(argStart, argCount);
         else if (head == "PaneSelectorBox")     translatePaneSelectorBox(argStart, argCount);
+        else if (head == "TooltipBox")          translateTooltipBox(argStart, argCount);
+        else if (head == "FrameBox")            translateFrameBox(argStart, argCount);
         else if (head == "DynamicBox")          { /* suppress */ }
         else if (head == "Dynamic")             { /* suppress */ }
         else if (head == "DynamicModuleBox")    { /* complex dynamic UI widget — suppress */ }
         else if (head == "MouseAppearanceTag")  { /* suppress */ }
-        else if (head == "GraphicsBox")         result_ += "[graphics]";
+        else if (head == "GraphicsBox")         translateGraphicsBox(argStart, argCount);
         else if (head == "RGBColor")            { /* colour node — handled by StyleBox */ }
         else if (head == "InformationData")     translateInformationData(n);
         else                                    translateUnknownExpr(head, argStart, argCount);
@@ -947,6 +960,32 @@ private:
 
         uint32_t nElems = listNode.childrenCount;
         uint32_t lStart = listNode.childrenStart;
+
+        // Detect: InterpolatingFunction[domain, data…]
+        // Box: RowBox[{"InterpolatingFunction","[",RowBox[{domain,",",…}],"]"}]
+        // The data args can be thousands of numbers — render only the domain range
+        // and replace everything else with a skeleton placeholder ⟪⟫.
+        if (nElems == 4) {
+            const Node& if0 = pr_.node(pr_.children[lStart]);
+            const Node& if1 = pr_.node(pr_.children[lStart + 1]);
+            const Node& if2 = pr_.node(pr_.children[lStart + 2]);
+            const Node& if3 = pr_.node(pr_.children[lStart + 3]);
+            if (if0.isString() && pr_.str(if0) == "InterpolatingFunction" &&
+                if1.isString() && pr_.str(if1) == "[" &&
+                if3.isString() && pr_.str(if3) == "]" &&
+                if2.isExpr()   && pr_.headName(if2) == "RowBox" &&
+                if2.childrenCount >= 2) {
+                const Node& argsListNode =
+                    pr_.node(pr_.children[if2.childrenStart + 1]);
+                if (argsListNode.kind == NodeKind::List &&
+                    argsListNode.childrenCount >= 1) {
+                    result_ += "\\mathrm{InterpolatingFunction}\\left[";
+                    translate(pr_.children[argsListNode.childrenStart]);
+                    result_ += ",\\langle\\!\\langle\\rangle\\!\\rangle\\right]";
+                    return;
+                }
+            }
+        }
 
         // Detect: Style[expr, opts…] emitted as literal text boxes by the kernel:
         // RowBox[{"Style", "[", body…, ",", opts…, "]"}]
@@ -1055,6 +1094,37 @@ private:
             }
         }
 
+        // Rule 1b (trigOmitParens, power): RowBox[{SuperscriptBox[trig, exp], "(", singleSymbol, ")"}]
+        // → \trig^exp symbol  (no outer parens; kernel emits this for e.g. csch^2(χ))
+        // Note: SuperscriptBox args are direct children [head, base, exp], not wrapped in a List.
+        if (opts_.trigOmitParens && nElems == 4) {
+            const Node& rn0 = pr_.node(pr_.children[lStart]);
+            const Node& rn1 = pr_.node(pr_.children[lStart + 1]);
+            const Node& rn3 = pr_.node(pr_.children[lStart + 3]);
+            if (rn0.isExpr() && pr_.headName(rn0) == "SuperscriptBox" &&
+                rn0.childrenCount >= 3 &&   // head + base + exp
+                (rn1.isString() && pr_.str(rn1) == "(") &&
+                (rn3.isString() && pr_.str(rn3) == ")")) {
+                const Node& supBase = pr_.node(pr_.children[rn0.childrenStart + 1]);
+                if (supBase.isString() || supBase.isSymbol()) {
+                    std::string_view cmd = getTrigLatex(pr_.str(supBase));
+                    if (!cmd.empty()) {
+                        std::string arg = translateToString(pr_.children[lStart + 2]);
+                        if (isSingleSymbolLatex(arg)) {
+                            std::string exp = translateToString(pr_.children[rn0.childrenStart + 2]);
+                            result_ += cmd;
+                            result_ += '^';
+                            if (needsBraces(exp)) { result_ += '{'; result_ += exp; result_ += '}'; }
+                            else                  { result_ += exp; }
+                            if (!arg.empty() && arg[0] != '\\') result_ += ' ';
+                            result_ += arg;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         // Function-call style: RowBox[{head, "(", args..., ")"}]
         // The wrapping-delimiter check above only fires when the FIRST element
         // is itself an open delimiter.  Here we catch cases where an operator
@@ -1070,7 +1140,19 @@ private:
             if ((snd.isString() || snd.isSymbol()) && (llst.isString() || llst.isSymbol())) {
                 auto [lOpen, lClose] = delimToLeftRight(pr_.str(snd), pr_.str(llst));
                 if (!lOpen.empty()) {
-                    translate(pr_.children[lStart]);          // head / name
+                    // Translate the function-name head.
+                    // Special case: the bare string "E" in function-call position is
+                    // EllipticE (TraditionalForm renders EllipticE[m] as E(m)) — NOT
+                    // Euler's number.  Euler's number always arrives as \[ExponentialE]
+                    // which special_chars maps to \mathrm{e}.  The generic translate()
+                    // would convert "E" → 'e' via the Euler-number rule, so we bypass
+                    // it here and emit the uppercase letter directly.
+                    const Node& headN = pr_.node(pr_.children[lStart]);
+                    if ((headN.isString() || headN.isSymbol()) && pr_.str(headN) == "E") {
+                        result_ += 'E';
+                    } else {
+                        translate(pr_.children[lStart]);      // head / name
+                    }
                     result_ += lOpen;
                     for (uint32_t i = 2; i + 1 < nElems; ++i)
                         translate(pr_.children[lStart + i]);
@@ -1081,8 +1163,39 @@ private:
         }
 
         // Generic: concatenate all children
-        for (uint32_t i = 0; i < nElems; ++i)
+        for (uint32_t i = 0; i < nElems; ++i) {
+            // Two-character operators that Mathematica boxes may split into two
+            // consecutive string atoms (optionally with a " " between them):
+            //   ** → NonCommutativeTimes → \star
+            //   /; → Condition           → /;
+            //   /: → TagSet              → /:
+            if (i + 1 < nElems) {
+                const Node& ni = pr_.node(pr_.children[lStart + i]);
+                if (ni.isString()) {
+                    std::string_view sv = pr_.str(ni);
+                    if (sv == "*" || sv == "/" || sv == "==" || sv == "=") {
+                        uint32_t next = i + 1;
+                        // skip optional space atom between the two chars
+                        if (next < nElems) {
+                            const Node& ns = pr_.node(pr_.children[lStart + next]);
+                            if (ns.isString() && pr_.str(ns) == " ") next++;
+                        }
+                        if (next < nElems) {
+                            const Node& ni2 = pr_.node(pr_.children[lStart + next]);
+                            if (ni2.isString()) {
+                                std::string_view sv2 = pr_.str(ni2);
+                                if (sv == "*"  && sv2 == "*")  { result_ += "\\star ";       i = next; continue; }
+                                if (sv == "/"  && sv2 == ";")  { result_ += "/;";            i = next; continue; }
+                                if (sv == "/"  && sv2 == ":")  { result_ += "/:";            i = next; continue; }
+                                if (sv == "==" && sv2 == "=")  { result_ += "\\equiv ";      i = next; continue; } // ===
+                                if (sv == "="  && sv2 == "!=") { result_ += "\\not\\equiv "; i = next; continue; } // =!=
+                            }
+                        }
+                    }
+                }
+            }
             translate(pr_.children[lStart + i]);
+        }
     }
 
     // ---- Helper: does the base expression contain an unbraced ^ or _?
@@ -1796,6 +1909,39 @@ private:
         }
     }
 
+    // ---- TooltipBox[display, tooltipLabel, opts…] ----
+    //   Render ONLY the displayed content; the tooltip label is hover-only and must
+    //   never reach the output. This matters for Root/AlgebraicNumber objects, whose
+    //   display form is InterpretationBox[TooltipBox[FrameBox[…numeric…],
+    //   TagBox[RowBox[{"\[LeftSkeleton]","1","\[RightSkeleton]"}], Short]], Root[…]] —
+    //   rendering the 2nd arg leaked the elision skeleton "⟨⟨1⟩⟩" into the LaTeX.
+    void translateTooltipBox(uint32_t a, uint32_t n) {
+        if (n >= 1) translate(pr_.children[a]);
+    }
+
+    // ---- FrameBox[content, opts…] ----
+    //   Render only the framed content; Background/FrameStyle/RoundingRadius/… are
+    //   cosmetic front-end chrome irrelevant to math LaTeX (and are what boxes the
+    //   Root numeric icon). Content-only avoids emitting the option Rules as noise.
+    void translateFrameBox(uint32_t a, uint32_t n) {
+        if (n >= 1) translate(pr_.children[a]);
+    }
+
+    // ---- GraphicsBox[primitives, opts…] ----
+    //   An EMPTY primitive list ({}) is a zero-content spacer — Wolfram emits
+    //   StyleBox[GraphicsBox[{}, ImageSize->{n,0}], …] between Column rows — so it
+    //   renders as nothing. A non-empty graphic is a placeholder; it is emitted as
+    //   \text{[graphics]} (NOT bare "[graphics]"): a leading "[" right after a matrix
+    //   row break \\ is parsed by (Ka)TeX as \\[dim] optional spacing → invalid size
+    //   → the whole matrix fails to render.
+    void translateGraphicsBox(uint32_t a, uint32_t n) {
+        if (n >= 1) {
+            const Node& prim = pr_.node(pr_.children[a]);
+            if (prim.isList() && prim.childrenCount == 0) return;  // empty spacer → nothing
+        }
+        result_ += "\\text{[graphics]}";
+    }
+
     // ---- InterpretationBox[display, interpretation, opts…] ----
     void translateInterpretationBox(uint32_t a, uint32_t n) {
         // When the interpretation is InformationData (from ?Symbol / Information[]),
@@ -2426,8 +2572,11 @@ private:
                 result_ += resolvedEnv;
                 result_ += '}';
                 for (uint32_t r = pageStart; r < pageEnd; ++r) {
+                    size_t rowMark = result_.size();
                     if (r > pageStart) result_ += "\\\\";
+                    size_t afterSep = result_.size();
                     translateGridRow(rowsNode, r);
+                    if (result_.size() == afterSep) result_.resize(rowMark);  // drop empty row
                 }
                 result_ += "\\end{";
                 result_ += resolvedEnv;
@@ -2448,8 +2597,13 @@ private:
         result_ += '}';
 
         for (uint32_t r = 0; r < rowCount; ++r) {
+            size_t rowMark = result_.size();
             if (r > 0) result_ += "\\\\";
+            size_t afterSep = result_.size();
             translateGridRow(rowsNode, r);
+            // A row that rendered nothing (e.g. an empty GraphicsBox spacer) would leave
+            // a dangling "\\" → "\\\\" or a trailing "\\". Drop the separator we added.
+            if (result_.size() == afterSep) result_.resize(rowMark);
         }
 
         result_ += "\\end{";
@@ -2533,6 +2687,30 @@ private:
 
         // ── Fix 2: double scripts ───────────────────────────────────────────
         fixDoubleScripts();
+
+        // ── Fix 3: guard matrix-row-break + "[" collision ───────────────────
+        guardRowBreakBracket();
+    }
+
+    // A matrix row break is "\\"; if the next cell's LaTeX starts with "[", the
+    // sequence "\\[" is parsed by (Ka)TeX as \\[dim] optional row spacing → an
+    // invalid-size error that kills the whole matrix. Insert an empty group so the
+    // "\\" sees "{", not "[". BTL never emits a legitimate \\[dim], so this is safe.
+    void guardRowBreakBracket() {
+        if (result_.find("\\\\[") == std::string::npos) return;
+        std::string out;
+        out.reserve(result_.size() + 8);
+        for (size_t i = 0; i < result_.size(); ) {
+            if (result_[i] == '\\' && i + 2 < result_.size()
+                && result_[i + 1] == '\\' && result_[i + 2] == '[') {
+                out += "\\\\{}";   // \\ + empty-group guard; the "[" is copied next
+                i += 2;
+            } else {
+                out += result_[i];
+                ++i;
+            }
+        }
+        result_.swap(out);
     }
 
     // Single-pass O(N) scan: collect all depth-0 script operators, then
