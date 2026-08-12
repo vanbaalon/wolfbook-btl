@@ -105,13 +105,6 @@ struct ParseResult {
         return str(nodes[nodeIdx]);
     }
 
-    // Get children indices for an Expr or List node
-    std::vector<uint32_t> getChildren(const Node& n) const {
-        return std::vector<uint32_t>(
-            children.begin() + n.childrenStart,
-            children.begin() + n.childrenStart + n.childrenCount);
-    }
-
     // For an Expr node, head symbol name
     std::string_view headName(const Node& n) const;
 };

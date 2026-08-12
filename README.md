@@ -49,19 +49,21 @@ Mathematica kernel
 
 ## Layers
 
-### 1. Wolfram Language (kernel side) — `renderer/`
+### 1. Wolfram Language (kernel side) — `renderer/` *(development-time only)*
 
-The WL files are the **reference implementation** of the translator. They run on the Mathematica/Wolfram Engine kernel and are also used as the ground truth for the unit tests.
+> The runtime addon does **NOT** call Mathematica or `wolframscript` and contains no embedded WL code. The files in `renderer/` are kept as a development-time reference and as input to the optional `./build.sh generate` step that regenerates the C++ special-character table.
+
+Legacy WL reference implementation (most files now live in `renderer_old/`):
 
 | File | Purpose |
 |------|---------|
-| `renderer/BoxToLatex.wl` | Main pattern-matching translator. Exports `boxToLatex`. |
-| `renderer/SpecialChars.wl` | `$WLtoLaTeX` Association: named WL chars → LaTeX commands. |
-| `renderer/Colors.wl` | `colorToHex` utility: `RGBColor`, `GrayLevel`, named colours → `#rrggbb`. |
-| `renderer/GridBox.wl` | `gridBoxToLatex`: matrix environments, piecewise, aligned. |
-| `renderer/Tests.wl` | `VerificationTest` suite (43 cases, literal box inputs only). |
+| `renderer/GridBox.wl` | `gridBoxToLatex`: matrix environments, piecewise, aligned. Stale; superseded by C++ `box_to_latex.cpp`. |
+| `renderer_old/BoxToLatex.wl` | Original pattern-matching translator (legacy reference). |
+| `renderer_old/SpecialChars.wl` | `$WLtoLaTeX` Association — superseded by generated `src/native/special_chars.cpp`. |
+| `renderer_old/Colors.wl` | `colorToHex` utility (legacy). |
+| `renderer_old/Tests.wl` | `VerificationTest` suite (legacy ground truth). |
 
-The WL layer always produces a **LaTeX string**. It knows nothing about rendering modes, KaTeX, or VSCode.
+The shipped translator is the C++ layer below; the WL files do not run at extension runtime.
 
 ### 2. C++ native addon — `src/native/`
 
@@ -271,8 +273,10 @@ npm install --ignore-scripts
 # Individual steps
 ./build.sh native     # C++ addon only
 ./build.sh ts         # TypeScript only
-./build.sh smoke      # 8-case Node.js smoke test
-./build.sh test       # 43-case WL unit tests (needs wolframscript)
+./build.sh smoke      # 35-case Node.js smoke test (`node tester/run_tests.js`)
+./build.sh test       # legacy WL unit tests (needs wolframscript; not used in CI)
+./build.sh generate   # OPTIONAL: regenerate src/native/special_chars.cpp from
+                      # renderer/GenerateCharTable.wls. Output is committed.
 ./build.sh clean      # remove build/ and out/
 ```
 
