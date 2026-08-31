@@ -11,6 +11,7 @@
 // =============================================================
 #include "line_breaker.h"
 
+#include <cstdint>
 #include <algorithm>
 #include <cassert>
 #include <cctype>
