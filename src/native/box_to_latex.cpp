@@ -1621,9 +1621,6 @@ private:
             }
         }
 
-        // ShowContents -> False: suppress the entire cell
-        if (!showContents) return;
-
         // When a text-styling flag is active and the body was a plain
         // multi-letter string that kMathOps mapped to an operator command
         // (e.g. "min" → \min), override with the raw text so the font
@@ -1658,7 +1655,8 @@ private:
             inner = "\\text{" + inner + "}";
         }
 
-        result_ += inner;
+        // Invisible content still reserves its width and height.
+        result_ += showContents ? inner : "\\phantom{" + inner + "}";
     }
 
     // Resolve a color-valued AST node to "#rrggbb"
@@ -2534,6 +2532,28 @@ private:
         // Track nesting depth so we only page the outermost matrix.
         const int myDepth = gridBoxDepth_++;
 
+        // Column[..., Spacings -> n] stores its uniform row gap here. Preserve
+        // that explicit gap instead of treating every Column as the same matrix.
+        std::string rowSeparator = "\\\\";
+        for (uint32_t i = 1; i < n; ++i) {
+            const Node* lhs = nullptr; const Node* rhs = nullptr;
+            if (!extractRule(pr_.node(pr_.children[a + i]), lhs, rhs) ||
+                !lhs->isSymbol() || pr_.str(*lhs) != "GridBoxSpacings" || !rhs->isList()) continue;
+            for (uint32_t j = 0; j < rhs->childrenCount; ++j) {
+                const Node* axis = nullptr; const Node* spec = nullptr;
+                if (!extractRule(pr_.node(pr_.children[rhs->childrenStart + j]), axis, spec) ||
+                    !axis->isString() || pr_.str(*axis) != "Rows" || !spec->isList() || spec->childrenCount != 1) continue;
+                const Node& repeat = pr_.node(pr_.children[spec->childrenStart]);
+                if (!repeat.isList() || repeat.childrenCount != 1) continue;
+                const Node& gap = pr_.node(pr_.children[repeat.childrenStart]);
+                if (gap.kind != NodeKind::Integer && gap.kind != NodeKind::Real) continue;
+                const double amount = gap.kind == NodeKind::Integer ? static_cast<double>(gap.iVal) : gap.dVal;
+                if (!std::isfinite(amount)) continue;
+                char value[64]; std::snprintf(value, sizeof(value), "%.6g", amount);
+                rowSeparator = "\\\\[" + std::string(value) + "em]";
+            }
+        }
+
         // Scan opts: look for ColumnAlignments to detect "aligned".
         // Only apply when env was NOT determined by surrounding bracket characters
         // (bracketLocked=true) — otherwise ColumnAlignments->Center on a pmatrix
@@ -2573,7 +2593,7 @@ private:
                 result_ += '}';
                 for (uint32_t r = pageStart; r < pageEnd; ++r) {
                     size_t rowMark = result_.size();
-                    if (r > pageStart) result_ += "\\\\";
+                    if (r > pageStart) result_ += rowSeparator;
                     size_t afterSep = result_.size();
                     translateGridRow(rowsNode, r);
                     if (result_.size() == afterSep) result_.resize(rowMark);  // drop empty row
@@ -2598,7 +2618,7 @@ private:
 
         for (uint32_t r = 0; r < rowCount; ++r) {
             size_t rowMark = result_.size();
-            if (r > 0) result_ += "\\\\";
+            if (r > 0) result_ += rowSeparator;
             size_t afterSep = result_.size();
             translateGridRow(rowsNode, r);
             // A row that rendered nothing (e.g. an empty GraphicsBox spacer) would leave
@@ -2695,7 +2715,7 @@ private:
     // A matrix row break is "\\"; if the next cell's LaTeX starts with "[", the
     // sequence "\\[" is parsed by (Ka)TeX as \\[dim] optional row spacing → an
     // invalid-size error that kills the whole matrix. Insert an empty group so the
-    // "\\" sees "{", not "[". BTL never emits a legitimate \\[dim], so this is safe.
+    // "\\" sees "{", not "[". Preserve the numeric em gaps emitted for GridBoxSpacings.
     void guardRowBreakBracket() {
         if (result_.find("\\\\[") == std::string::npos) return;
         std::string out;
@@ -2703,6 +2723,17 @@ private:
         for (size_t i = 0; i < result_.size(); ) {
             if (result_[i] == '\\' && i + 2 < result_.size()
                 && result_[i + 1] == '\\' && result_[i + 2] == '[') {
+                const size_t end = result_.find(']', i + 3);
+                if (end != std::string::npos) {
+                    const std::string gap = result_.substr(i + 3, end - i - 3);
+                    char* tail = nullptr;
+                    const double value = std::strtod(gap.c_str(), &tail);
+                    if (tail != gap.c_str() && std::isfinite(value) && std::string_view(tail) == "em") {
+                        out += "\\\\";
+                        i += 2;
+                        continue;
+                    }
+                }
                 out += "\\\\{}";   // \\ + empty-group guard; the "[" is copied next
                 i += 2;
             } else {

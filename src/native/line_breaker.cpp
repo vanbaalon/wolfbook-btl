@@ -548,6 +548,7 @@ struct Tokenizer {
             else if (isBinOpCmd(cmd)) out.breakClass = BreakClass::BinOp;
             else if (isOpenDelim(cmd))  out.breakClass = BreakClass::Open;
             else if (isCloseDelim(cmd)) out.breakClass = BreakClass::Close;
+            else if (cmd == "\\,") out.breakClass = BreakClass::BinOp; // implicit multiplication between factors
             return true;
         }
 
@@ -805,6 +806,9 @@ static std::vector<Breakpoint> extractBreakpoints(
         // emitting "\\" right before "\right...", which can produce
         // invalid LaTeX in gathered/aligned output.
         if (bc == BreakClass::Close) continue;
+        // Keep a function (including a superscript) attached to its argument.
+        // A thin-space product separator provides a break before the next factor.
+        if (bc == BreakClass::Open && i > 0 && tokens[i - 1].breakClass == BreakClass::None) continue;
 
         int dd = tokens[i].delimDepth;
 
